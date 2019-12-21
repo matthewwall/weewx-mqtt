@@ -1,0 +1,65 @@
+0.19 04mar2019
+* support for nested log_success/log_failure
+* support for MQTT clientid
+
+0.18 26aug2018
+* added support for both archive and loop bindings
+
+
+0.17 15aug2017
+* added full TLS support (thanks to gary roderick)
+
+0.16
+* clean up json import
+
+0.15 25apr2016
+* remove dependency on wx_binding
+
+0.14 08oct2015
+* options for aggregation: aggregate (as json), individual, or both
+* log mqtt failures
+
+0.13 29oct2015
+* added binding option so it is now possible to upload on each loop packet
+* added retain option
+* provide feedback if failure for any individual publish
+
+0.12 14oct2015
+* update readme with weewx 3.x instructions
+
+0.11
+* retry when attempts to connect fail
+
+0.10
+* added example of how to use the inputs dictionary
+
+0.9 23mar2015
+* fail hard if unit system is not known
+
+0.8 11feb2015
+* added loop_start/loop_stop (thanks to Jan Chrillesen and karlp)
+
+0.7 04feb2015
+* do not set username/password if none specified
+
+0.6 30jan2015
+* added augment_record option
+
+0.5 29jan2015
+* fixed bug in unit_system specification
+
+0.4 06dec2014
+* update to weewx v3
+* added system to specify which observations are uploaded
+* added system to specify per-observation labels, units, and formatting
+
+0.3
+* fixed version tag
+* units is now unit_system
+* if no unit_system is specified, units will be those of the database
+
+0.2 01sep14
+* added option to specify units
+
+0.1
+* initial implementation
