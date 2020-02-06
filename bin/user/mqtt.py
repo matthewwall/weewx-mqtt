@@ -59,13 +59,13 @@ Paho client tls_set method.  Refer to Paho client documentation for details:
             #ciphers =
 """
 
-import Queue
+import queue
 import paho.mqtt.client as mqtt
 import random
 import sys
 import syslog
 import time
-import urlparse
+import urllib.parse
 
 try:
     import cjson as json
@@ -106,7 +106,7 @@ def _compat(d, old_label, new_label):
         d.pop(old_label)
 
 def _obfuscate_password(url):
-    parts = urlparse.urlparse(url)
+    parts = urllib.parse.urlparse(url)
     if parts.password is not None:
         # split out the host portion manually. We could use
         # parts.hostname and parts.port, but then you'd have to check
@@ -194,7 +194,7 @@ class MQTT(weewx.restx.StdRESTbase):
             site_dict = config_dict['StdRESTful']['MQTT']
             site_dict = accumulateLeaves(site_dict, max_level=1)
             site_dict['server_url']
-        except KeyError, e:
+        except KeyError as e:
             logerr("Data will not be uploaded: Missing option %s" % e)
             return
 
@@ -236,7 +236,7 @@ class MQTT(weewx.restx.StdRESTbase):
         except weewx.UnknownBinding:
             pass
 
-        self.archive_queue = Queue.Queue()
+        self.archive_queue = queue.Queue()
         self.archive_thread = MQTTThread(self.archive_queue, **site_dict)
         self.archive_thread.start()
 
@@ -302,7 +302,7 @@ class MQTTThread(weewx.restx.RESTThread):
                  augment_record=True, retain=False, aggregation='individual',
                  inputs={}, obs_to_upload='all', append_units_label=True,
                  manager_dict=None, tls=None,
-                 post_interval=None, max_backlog=sys.maxint, stale=None,
+                 post_interval=None, max_backlog=sys.maxsize, stale=None,
                  log_success=True, log_failure=True,
                  timeout=60, max_tries=3, retry_wait=5):
         super(MQTTThread, self).__init__(queue,
@@ -402,7 +402,7 @@ class MQTTThread(weewx.restx.RESTThread):
         if self.skip_upload:
             loginf("skipping upload")
             return
-        url = urlparse.urlparse(self.server_url)
+        url = urllib.parse.urlparse(self.server_url)
         for _count in range(self.max_tries):
             try:
                 client_id = self.client_id
@@ -433,7 +433,7 @@ class MQTTThread(weewx.restx.RESTThread):
                 mc.loop_stop()
                 mc.disconnect()
                 return
-            except (socket.error, socket.timeout, socket.herror), e:
+            except (socket.error, socket.timeout, socket.herror) as e:
                 logdbg("Failed upload attempt %d: %s" % (_count+1, e))
             time.sleep(self.retry_wait)
         else:
