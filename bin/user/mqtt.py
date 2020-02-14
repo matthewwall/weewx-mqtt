@@ -1,5 +1,5 @@
-# $Id: mqtt.py 1801 2019-03-19 14:35:05Z mwall $
 # Copyright 2013 Matthew Wall
+# Distributed under the terms of the GNU Public License (GPLv3)
 """
 Upload data to MQTT server
 
@@ -59,13 +59,19 @@ Paho client tls_set method.  Refer to Paho client documentation for details:
             #ciphers =
 """
 
-import Queue
+try:
+    import queue as Queue
+except ImportError:
+    import Queue
+
+try:
+    from urllib.parse import urlparse
+except ImportError:
+    from urlparse import urlparse
+
 import paho.mqtt.client as mqtt
 import random
-import sys
-import syslog
 import time
-import urlparse
 
 try:
     import cjson as json
@@ -80,25 +86,37 @@ except (ImportError, AttributeError):
 import weewx
 import weewx.restx
 import weewx.units
-from weeutil.weeutil import to_bool, accumulateLeaves
+from weeutil.weeutil import to_int, to_bool, accumulateLeaves
 
-VERSION = "0.19"
+VERSION = "0.20"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
                                    weewx.__version__)
 
-def logmsg(level, msg):
-    syslog.syslog(level, 'restx: MQTT: %s' % msg)
+try:
+    # weewx4 logging
+    import weeutil.logger
+    import logging
+    log = logging.getLogger(__name__)
+    def logdbg(msg):
+        log.debug(msg)
+    def loginf(msg):
+        log.info(msg)
+    def logerr(msg):
+        log.error(msg)
+except ImportError:
+    # old-style weewx logging
+    import syslog
+    def logmsg(level, msg):
+        syslog.syslog(level, 'restx: MQTT: %s' % msg)
+    def logdbg(msg):
+        logmsg(syslog.LOG_DEBUG, msg)
+    def loginf(msg):
+        logmsg(syslog.LOG_INFO, msg)
+    def logerr(msg):
+        logmsg(syslog.LOG_ERR, msg)
 
-def logdbg(msg):
-    logmsg(syslog.LOG_DEBUG, msg)
-
-def loginf(msg):
-    logmsg(syslog.LOG_INFO, msg)
-
-def logerr(msg):
-    logmsg(syslog.LOG_ERR, msg)
 
 def _compat(d, old_label, new_label):
     if old_label in d and new_label not in d:
@@ -106,7 +124,7 @@ def _compat(d, old_label, new_label):
         d.pop(old_label)
 
 def _obfuscate_password(url):
-    parts = urlparse.urlparse(url)
+    parts = urlparse(url)
     if parts.password is not None:
         # split out the host portion manually. We could use
         # parts.hostname and parts.port, but then you'd have to check
@@ -207,6 +225,7 @@ class MQTT(weewx.restx.StdRESTbase):
         site_dict.setdefault('augment_record', True)
         site_dict.setdefault('obs_to_upload', 'all')
         site_dict.setdefault('retain', False)
+        site_dict.setdefault('qos', 0)
         site_dict.setdefault('aggregation', 'individual,aggregate')
 
         usn = site_dict.get('unit_system', None)
@@ -222,6 +241,7 @@ class MQTT(weewx.restx.StdRESTbase):
         site_dict['append_units_label'] = to_bool(site_dict.get('append_units_label'))
         site_dict['augment_record'] = to_bool(site_dict.get('augment_record'))
         site_dict['retain'] = to_bool(site_dict.get('retain'))
+        site_dict['qos'] = to_int(site_dict.get('qos'))
         binding = site_dict.pop('binding', 'archive')
         loginf("binding to %s" % binding)
 
@@ -302,7 +322,7 @@ class MQTTThread(weewx.restx.RESTThread):
                  augment_record=True, retain=False, aggregation='individual',
                  inputs={}, obs_to_upload='all', append_units_label=True,
                  manager_dict=None, tls=None,
-                 post_interval=None, max_backlog=sys.maxint, stale=None,
+                 post_interval=None, stale=None,
                  log_success=True, log_failure=True,
                  timeout=60, max_tries=3, retry_wait=5):
         super(MQTTThread, self).__init__(queue,
@@ -402,7 +422,7 @@ class MQTTThread(weewx.restx.RESTThread):
         if self.skip_upload:
             loginf("skipping upload")
             return
-        url = urlparse.urlparse(self.server_url)
+        url = urlparse(self.server_url)
         for _count in range(self.max_tries):
             try:
                 client_id = self.client_id
@@ -420,7 +440,7 @@ class MQTTThread(weewx.restx.RESTThread):
                 if self.aggregation.find('aggregate') >= 0:
                     tpc = self.topic + '/loop'
                     (res, mid) = mc.publish(tpc, json.dumps(data),
-                                            retain=self.retain)
+                                            retain=self.retain, qos=self.qos)
                     if res != mqtt.MQTT_ERR_SUCCESS:
                         logerr("publish failed for %s: %s" % (tpc, res))
                 if self.aggregation.find('individual') >= 0:

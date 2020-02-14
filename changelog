@@ -1,3 +1,7 @@
+0.20 14feb2020
+* support python3 and weewx4
+* added qos option
+
 0.19 04mar2019
 * support for nested log_success/log_failure
 * support for MQTT clientid

@@ -1,8 +1,8 @@
-# $Id: install.py 1801 2019-03-19 14:35:05Z mwall $
 # installer for MQTT
-# Copyright 2014 Matthew Wall
+# Copyright 2014-2020 Matthew Wall
+# Distributed under the terms of the GNU Public License (GPLv3)
 
-from setup import ExtensionInstaller
+from weecfg.extension import ExtensionInstaller
 
 def loader():
     return MQTTInstaller()
@@ -10,7 +10,7 @@ def loader():
 class MQTTInstaller(ExtensionInstaller):
     def __init__(self):
         super(MQTTInstaller, self).__init__(
-            version="0.19",
+            version="0.20",
             name='mqtt',
             description='Upload weather data to MQTT server.',
             author="Matthew Wall",

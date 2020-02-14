@@ -1,5 +1,6 @@
-mqtt - weewx extension that sends data to an MQTT server
-Copyright 2014 Matthew Wall
+mqtt - weewx extension that sends data to an MQTT broker
+Copyright 2014-2020 Matthew Wall
+Distributed under the terms of the GNU Public License (GPLv3)
 
 Installation instructions:
 
