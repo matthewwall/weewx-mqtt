@@ -20,8 +20,8 @@ Other MQTT options can be specified:
 [StdRestful]
     [[MQTT]]
         ...
-        qos = 1 # options are 0, 1, 2
-        retain = true # options are true or false
+        qos = 1        # options are 0, 1, 2
+        retain = true  # options are true or false
 
 The observations can be sent individually, or in an aggregated packet:
 
@@ -30,7 +30,14 @@ The observations can be sent individually, or in an aggregated packet:
         ...
         aggregation = individual, aggregate # individual, aggregate, or both
 
-Use the inputs map to customer name, format, or units:
+Bind to loop packets or archive records:
+
+[StdRestful]
+    [[MQTT]]
+        ...
+        binding = loop # options are loop or archive
+
+Use the inputs map to customize name, format, or units for any observation:
 
 [StdRestful]
     [[MQTT]]
@@ -337,7 +344,7 @@ class MQTTThread(weewx.restx.RESTThread):
                  client_id='', topic='', unit_system=None, skip_upload=False,
                  augment_record=True, retain=False, aggregation='individual',
                  inputs={}, obs_to_upload='all', append_units_label=True,
-                 manager_dict=None, tls=None,
+                 manager_dict=None, tls=None, qos=0,
                  post_interval=None, stale=None,
                  log_success=True, log_failure=True,
                  timeout=60, max_tries=3, retry_wait=5,
@@ -376,6 +383,7 @@ class MQTTThread(weewx.restx.RESTThread):
         self.unit_system = unit_system
         self.augment_record = augment_record
         self.retain = retain
+        self.qos = qos
         self.aggregation = aggregation
         self.templates = dict()
         self.skip_upload = skip_upload
