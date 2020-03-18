@@ -71,6 +71,7 @@ except ImportError:
 
 import paho.mqtt.client as mqtt
 import random
+import sys
 import time
 
 try:
@@ -88,7 +89,7 @@ import weewx.restx
 import weewx.units
 from weeutil.weeutil import to_int, to_bool, accumulateLeaves
 
-VERSION = "0.20"
+VERSION = "0.21"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -212,7 +213,7 @@ class MQTT(weewx.restx.StdRESTbase):
             site_dict = config_dict['StdRESTful']['MQTT']
             site_dict = accumulateLeaves(site_dict, max_level=1)
             site_dict['server_url']
-        except KeyError, e:
+        except KeyError as e:
             logerr("Data will not be uploaded: Missing option %s" % e)
             return
 
@@ -324,7 +325,8 @@ class MQTTThread(weewx.restx.RESTThread):
                  manager_dict=None, tls=None,
                  post_interval=None, stale=None,
                  log_success=True, log_failure=True,
-                 timeout=60, max_tries=3, retry_wait=5):
+                 timeout=60, max_tries=3, retry_wait=5,
+                 max_backlog=sys.maxsize):
         super(MQTTThread, self).__init__(queue,
                                          protocol_name='MQTT',
                                          manager_dict=manager_dict,
@@ -453,7 +455,7 @@ class MQTTThread(weewx.restx.RESTThread):
                 mc.loop_stop()
                 mc.disconnect()
                 return
-            except (socket.error, socket.timeout, socket.herror), e:
+            except (socket.error, socket.timeout, socket.herror) as e:
                 logdbg("Failed upload attempt %d: %s" % (_count+1, e))
             time.sleep(self.retry_wait)
         else:

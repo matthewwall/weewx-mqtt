@@ -1,3 +1,6 @@
+0.21 18mar2020
+* Fixed some Python 3 bugs.
+
 0.20 14feb2020
 * support python3 and weewx4
 * added qos option
