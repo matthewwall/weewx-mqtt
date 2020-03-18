@@ -15,7 +15,22 @@ Minimal configuration:
         topic = weather
         unit_system = METRIC
 
-Use of the inputs map to customer name, format, or units:
+Other MQTT options can be specified:
+
+[StdRestful]
+    [[MQTT]]
+        ...
+        qos = 1 # options are 0, 1, 2
+        retain = true # options are true or false
+
+The observations can be sent individually, or in an aggregated packet:
+
+[StdRestful]
+    [[MQTT]]
+        ...
+        aggregation = individual, aggregate # individual, aggregate, or both
+
+Use the inputs map to customer name, format, or units:
 
 [StdRestful]
     [[MQTT]]
@@ -29,7 +44,7 @@ Use of the inputs map to customer name, format, or units:
             [[[[windSpeed]]]]
                 units = knot  # convert the wind speed to knots
 
-Use of TLS to encrypt connection to broker.  The TLS options will be passed to
+Use TLS to encrypt connection to broker.  The TLS options will be passed to
 Paho client tls_set method.  Refer to Paho client documentation for details:
 
   https://eclipse.org/paho/clients/python/docs/
