@@ -111,7 +111,7 @@ import weewx.restx
 import weewx.units
 from weeutil.weeutil import to_int, to_bool, accumulateLeaves
 
-VERSION = "0.21"
+VERSION = "0.22"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -323,17 +323,37 @@ class TLSDefaults(object):
         # dependent on the OpenSSL install so catch exceptions
         self.TLS_VER_OPTIONS = dict()
         try:
+            self.TLS_VER_OPTIONS['tls'] = ssl.PROTOCOL_TLS
+        except AttributeError:
+            pass
+        try:
+            # deprecated - use tls instead
+            self.TLS_VER_OPTIONS['tlsv1'] = ssl.PROTOCOL_TLSv1
+        except AttributeError:
+            pass
+        try:
+            # deprecated - use tls instead
+            self.TLS_VER_OPTIONS['tlsv11'] = ssl.PROTOCOL_TLSv1_1
+        except AttributeError:
+            pass
+        try:
+            # deprecated - use tls instead
+            self.TLS_VER_OPTIONS['tlsv12'] = ssl.PROTOCOL_TLSv1_2
+        except AttributeError:
+            pass
+        try:
+            # SSLv2 is insecure - this protocol is deprecated
             self.TLS_VER_OPTIONS['sslv2'] = ssl.PROTOCOL_SSLv2
         except AttributeError:
             pass
         try:
-            self.TLS_VER_OPTIONS['sslv3'] = ssl.PROTOCOL_SSLv3
+            # deprecated - use tls instead
+            self.TLS_VER_OPTIONS['sslv23'] = ssl.PROTOCOL_SSLv23
         except AttributeError:
             pass
-        self.TLS_VER_OPTIONS['sslv23'] = ssl.PROTOCOL_SSLv23
-        self.TLS_VER_OPTIONS['tlsv1'] = ssl.PROTOCOL_TLSv1
         try:
-            self.TLS_VER_OPTIONS['tls'] = ssl.PROTOCOL_TLS
+            # SSLv3 is insecure - this protocol is deprecated
+            self.TLS_VER_OPTIONS['sslv3'] = ssl.PROTOCOL_SSLv3
         except AttributeError:
             pass
 

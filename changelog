@@ -1,3 +1,6 @@
+0.22 12apr2020
+* added more ssl options (even deprecated ones)
+
 0.21 18mar2020
 * Fixed some Python 3 bugs.
 
