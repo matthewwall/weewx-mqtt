@@ -71,10 +71,16 @@ Paho client tls_set method.  Refer to Paho client documentation for details:
             #   Default is 'required'.
             cert_reqs = required
             # SSL/TLS protocol (optional).
-            #   Options include sslv1, sslv2, sslv23, tls, tlsv1.
-            #   Default is 'tlsv1'
+            #   Options include sslv2, sslv23, sslv3, tls, tlsv1, tlsv11,
+            #   tlsv12.
+            #   Default is 'tlsv12'
             #   Not all options are supported by all systems.
-            tls_version = tlsv1
+            #   OpenSSL version till 1.0.0.h supports sslv2, sslv3 and tlsv1
+            #   OpenSSL >= 1.0.1 supports tlsv11 and tlsv12
+            #   OpenSSL >= 1.1.1 support TLSv1.3 (use tls_version = tls)
+            #   Check your OpenSSL protocol support with:
+            #   openssl s_client -help 2>&1  > /dev/null | egrep "\-(ssl|tls)[^a-z]"
+            tls_version = tlsv12
             # Allowable encryption ciphers (optional).
             #   To specify multiple cyphers, delimit with commas and enclose
             #   in quotes.
@@ -331,17 +337,17 @@ class TLSDefaults(object):
         except AttributeError:
             pass
         try:
-            # deprecated - use tls instead
+            # deprecated - use tls instead, or tlsv12 if python < 2.7.13
             self.TLS_VER_OPTIONS['tlsv1'] = ssl.PROTOCOL_TLSv1
         except AttributeError:
             pass
         try:
-            # deprecated - use tls instead
+            # deprecated - use tls instead, or tlsv12 if python < 2.7.13
             self.TLS_VER_OPTIONS['tlsv11'] = ssl.PROTOCOL_TLSv1_1
         except AttributeError:
             pass
         try:
-            # deprecated - use tls instead
+            # deprecated - use tls instead if python >= 2.7.13
             self.TLS_VER_OPTIONS['tlsv12'] = ssl.PROTOCOL_TLSv1_2
         except AttributeError:
             pass
@@ -351,7 +357,8 @@ class TLSDefaults(object):
         except AttributeError:
             pass
         try:
-            # deprecated - use tls instead
+            # deprecated - use tls instead, or tlsv12 if python < 2.7.13
+            # (alias for PROTOCOL_TLS)
             self.TLS_VER_OPTIONS['sslv23'] = ssl.PROTOCOL_SSLv23
         except AttributeError:
             pass
