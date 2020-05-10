@@ -1,4 +1,4 @@
-# Copyright 2013 Matthew Wall
+# Copyright 2013-2020 Matthew Wall
 # Distributed under the terms of the GNU Public License (GPLv3)
 """
 Upload data to MQTT server
@@ -111,7 +111,7 @@ import weewx.restx
 import weewx.units
 from weeutil.weeutil import to_int, to_bool, accumulateLeaves
 
-VERSION = "0.22"
+VERSION = "0.23"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -167,6 +167,8 @@ UNIT_REDUCTIONS = {
     'mile_per_hour2': 'mph',
     'km_per_hour': 'kph',
     'km_per_hour2': 'kph',
+    'knot': 'knot',
+    'knot2': 'knot2',
     'meter_per_second': 'mps',
     'meter_per_second2': 'mps',
     'degree_compass': None,
@@ -177,15 +179,17 @@ UNIT_REDUCTIONS = {
     }
 
 # return the units label for an observation
-def _get_units_label(obs, unit_system):
-    (unit_type, _) = weewx.units.getStandardUnitType(unit_system, obs)
+def _get_units_label(obs, unit_system, unit_type=None):
+    if unit_type is None:
+        (unit_type, _) = weewx.units.getStandardUnitType(unit_system, obs)
     return UNIT_REDUCTIONS.get(unit_type, unit_type)
 
 # get the template for an observation based on the observation key
 def _get_template(obs_key, overrides, append_units_label, unit_system):
     tmpl_dict = dict()
     if append_units_label:
-        label = _get_units_label(obs_key, unit_system)
+        unit_type = overrides.get('units')
+        label = _get_units_label(obs_key, unit_system, unit_type)
         if label is not None:
             tmpl_dict['name'] = "%s_%s" % (obs_key, label)
     for x in ['name', 'format', 'units']:

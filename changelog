@@ -1,3 +1,6 @@
+0.23 10may2020
+* fixed unit label for specialized observations (thanks to mbradley)
+
 0.22 12apr2020
 * added more ssl options (even deprecated ones)
 

@@ -36,3 +36,9 @@ wee_extension --install weewx-mqtt.zip
 
 sudo /etc/init.d/weewx stop
 sudo /etc/init.d/weewx start
+
+
+===============================================================================
+Options
+
+For configuration options and details, see the comments in mqtt.py
