@@ -255,13 +255,11 @@ class MQTT(weewx.restx.StdRESTbase):
         if 'tls' in config_dict['StdRESTful']['MQTT']:
             site_dict['tls'] = dict(config_dict['StdRESTful']['MQTT']['tls'])
 
-        # TODO handle binding at topic level
-        binding = site_dict.pop('binding', 'archive')
-        loginf("binding to %s" % binding)
-
         topic_configs = site_dict.get('topics', {})
         if not topic_configs:
             topic = site_dict.get('topic', 'weather')
+            site_dict['topics'] = {}
+            site_dict['topics'][topic] = {}
             topics = {}
             topics[topic] = {}
             self.init_topic_dict(topic, site_dict, topics[topic])
@@ -276,10 +274,15 @@ class MQTT(weewx.restx.StdRESTbase):
         mqtt_dict['client_id'] = site_dict.get('client_id', '')
 
         augment_record = False
+        archive_binding = False
+        loop_binding = False
         for topic in topics:
             if topics[topic]['augment_record']:
                 augment_record = True
-                break
+            if 'archive' in topics[topic]['binding']:
+                archive_binding = True
+            if 'loop' in topics[topic]['binding']:
+                loop_binding = True
         mqtt_dict['topics'] = topics
 
         # if we are supposed to augment the record with data from weather
@@ -298,9 +301,9 @@ class MQTT(weewx.restx.StdRESTbase):
         self.archive_thread.start()
 
         # TODO handle binding at topic level
-        if 'archive' in binding:
+        if archive_binding:
             self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
-        if 'loop' in binding:
+        if loop_binding:
             self.bind(weewx.NEW_LOOP_PACKET, self.new_loop_packet)
 
         if 'topic' in site_dict:
@@ -318,19 +321,22 @@ class MQTT(weewx.restx.StdRESTbase):
 
     def init_topic_dict(self, topic, site_dict, topic_dict):
         topic_dict['skip_upload'] = False
-        topic_dict['aggregation'] = site_dict.get('aggregation', 'individual,aggregate')
-        topic_dict['append_units_label'] = to_bool(site_dict.get('append_units_label', True))
-        topic_dict['augment_record'] = to_bool(site_dict.get('augment_record', True))
-        usn = site_dict.get('unit_system', None)
+        topic_dict['binding'] = site_dict['topics'][topic].get('binding', site_dict.get('binding', 'archive'))
+        topic_dict['aggregation'] = site_dict['topics'][topic].get('aggregation', site_dict.get('aggregation', 'individual,aggregate'))
+        topic_dict['append_units_label'] = to_bool(site_dict['topics'][topic].get('append_units_label', site_dict.get('append_units_label', True)))
+        topic_dict['augment_record'] = to_bool(site_dict['topics'][topic].get('augment_record', site_dict.get('augment_record', True)))
+        usn = site_dict['topics'][topic].get('unit_system', site_dict.get('unit_system', None))
         if  usn is not None:
             topic_dict['unit_system'] = weewx.units.unit_constants[usn]
             loginf("for %s: desired unit system is %s" % (topic, usn))
 
-        topic_dict['upload_all'] = True if site_dict.get('obs_to_upload', 'all').lower() == 'all' else False
-        topic_dict['retain'] = to_bool(site_dict.get('retain', False))
-        topic_dict['qos'] = to_int(site_dict.get('qos', 0))
-        topic_dict['inputs'] = dict(site_dict).get('inputs', {})
+        topic_dict['upload_all'] = True if site_dict['topics'][topic].get('obs_to_upload', site_dict.get('obs_to_upload', 'all')).lower() == 'all' else False
+        topic_dict['retain'] = to_bool(site_dict['topics'][topic].get('retain', site_dict.get('retain', False)))
+        topic_dict['qos'] = to_int(site_dict['topics'][topic].get('qos', site_dict.get('qos', 0)))
+        topic_dict['inputs'] = dict(site_dict['topics'][topic].get('inputs', site_dict).get('inputs', {}))
         topic_dict['templates'] = dict()
+
+        loginf("for %s binding to %s" % (topic, topic_dict['binding']))
 
 class TLSDefaults(object):
     def __init__(self):
@@ -474,9 +480,16 @@ class MQTTThread(weewx.restx.RESTThread):
 
     def process_record(self, record, dbmanager):
         for topic in self.topics:
-            self.process2_record(**self.topics[topic], topic=topic, record=record, dbm=dbmanager)
+            if 'interval' in record:
+                print("archive")
+                if 'archive' in self.topics[topic]['binding']:
+                    self.process2_record(**self.topics[topic], topic=topic, record=record, dbm=dbmanager)
+            else:
+                if 'loop' in self.topics[topic]['binding']:
+                    self.process2_record(**self.topics[topic], topic=topic, record=record, dbm=dbmanager)
 
-    def process2_record(self, record, dbm, topic, skip_upload, upload_all, aggregation, append_units_label,
+
+    def process2_record(self, record, dbm, topic, binding, skip_upload, upload_all, aggregation, append_units_label,
                         augment_record, unit_system, retain, qos, inputs, templates):
         import socket
         if augment_record and dbm is not None:
