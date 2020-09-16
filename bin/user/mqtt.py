@@ -243,7 +243,7 @@ class MQTT(weewx.restx.StdRESTbase):
         loginf("service version is %s" % VERSION)
         try:
             site_dict = config_dict['StdRESTful']['MQTT']
-            site_dict = accumulateLeaves(site_dict, max_level=1)
+            #site_dict = accumulateLeaves(site_dict, max_level=1)
             site_dict['server_url']
         except KeyError as e:
             logerr("Data will not be uploaded: Missing option %s" % e)
@@ -255,40 +255,38 @@ class MQTT(weewx.restx.StdRESTbase):
         if 'tls' in config_dict['StdRESTful']['MQTT']:
             site_dict['tls'] = dict(config_dict['StdRESTful']['MQTT']['tls'])
 
-        site_dict['augment_record'] = to_bool(site_dict.get('augment_record', True)) # TODO
+        # TODO handle binding at topic level
         binding = site_dict.pop('binding', 'archive')
         loginf("binding to %s" % binding)
 
-        default_topic = site_dict.get('topic', 'weather')
-        topics = {}
-        topics[default_topic] = {}
-        topics[default_topic]['skip_upload'] = False
-        topics[default_topic]['aggregation'] = site_dict.get('aggregation', 'individual,aggregate')
-        topics[default_topic]['append_units_label'] = to_bool(site_dict.get('append_units_label', True))
-        topics[default_topic]['augment_record'] = to_bool(site_dict.get('augment_record', True))
-        usn = site_dict.get('unit_system', None)
-        if  usn is not None:
-            topics[default_topic]['unit_system'] = weewx.units.unit_constants[usn]
-
-        topics[default_topic]['upload_all'] = True if site_dict.get('obs_to_upload', 'all').lower() == 'all' else False
-
-        topics[default_topic]['retain'] = to_bool(site_dict.get('retain', False))
-        topics[default_topic]['qos'] = to_int(site_dict.get('qos', 0))
-        topics[default_topic]['inputs'] = dict(config_dict['StdRESTful']['MQTT']).get('inputs', {})
-        topics[default_topic]['templates'] = dict()
+        topic_configs = site_dict.get('topics', {})
+        if not topic_configs:
+            topic = site_dict.get('topic', 'weather')
+            topics = {}
+            topics[topic] = {}
+            self.init_topic_dict(topic, site_dict, topics[topic])
+        else:
+            topics = {}
+            for topic in topic_configs:
+                topics[topic] = {}
+                self.init_topic_dict(topic, site_dict, topics[topic])
 
         mqtt_dict = {}
         mqtt_dict['server_url'] = site_dict['server_url']
         mqtt_dict['client_id'] = site_dict.get('client_id', '')
 
+        augment_record = False
+        for topic in topics:
+            if topics[topic]['augment_record']:
+                augment_record = True
+                break
         mqtt_dict['topics'] = topics
 
-        # TODO - need to handle augment_record may only be at the topic level
         # if we are supposed to augment the record with data from weather
         # tables, then get the manager dict to do it.  there may be no weather
         # tables, so be prepared to fail.
         try:
-            if site_dict.get('augment_record'):
+            if augment_record:
                 _manager_dict = weewx.manager.get_manager_dict_from_config(
                     config_dict, 'wx_binding')
                 site_dict['manager_dict'] = _manager_dict
@@ -307,8 +305,6 @@ class MQTT(weewx.restx.StdRESTbase):
 
         if 'topic' in site_dict:
             loginf("topic is %s" % site_dict['topic'])
-        if usn is not None:
-            loginf("desired unit system is %s" % usn)
         loginf("data will be uploaded to %s" %
                _obfuscate_password(site_dict['server_url']))
         if 'tls' in site_dict:
@@ -320,6 +316,21 @@ class MQTT(weewx.restx.StdRESTbase):
     def new_loop_packet(self, event):
         self.archive_queue.put(event.packet)
 
+    def init_topic_dict(self, topic, site_dict, topic_dict):
+        topic_dict['skip_upload'] = False
+        topic_dict['aggregation'] = site_dict.get('aggregation', 'individual,aggregate')
+        topic_dict['append_units_label'] = to_bool(site_dict.get('append_units_label', True))
+        topic_dict['augment_record'] = to_bool(site_dict.get('augment_record', True))
+        usn = site_dict.get('unit_system', None)
+        if  usn is not None:
+            topic_dict['unit_system'] = weewx.units.unit_constants[usn]
+            loginf("for %s: desired unit system is %s" % (topic, usn))
+
+        topic_dict['upload_all'] = True if site_dict.get('obs_to_upload', 'all').lower() == 'all' else False
+        topic_dict['retain'] = to_bool(site_dict.get('retain', False))
+        topic_dict['qos'] = to_int(site_dict.get('qos', 0))
+        topic_dict['inputs'] = dict(site_dict).get('inputs', {})
+        topic_dict['templates'] = dict()
 
 class TLSDefaults(object):
     def __init__(self):
@@ -461,9 +472,9 @@ class MQTTThread(weewx.restx.RESTThread):
             data['position'] = ','.join(parts)
         return data
 
-    def process_record(self, record, dbm):
+    def process_record(self, record, dbmanager):
         for topic in self.topics:
-            self.process2_record(**self.topics[topic], topic=topic, record=record, dbm=dbm)
+            self.process2_record(**self.topics[topic], topic=topic, record=record, dbm=dbmanager)
 
     def process2_record(self, record, dbm, topic, skip_upload, upload_all, aggregation, append_units_label,
                         augment_record, unit_system, retain, qos, inputs, templates):
