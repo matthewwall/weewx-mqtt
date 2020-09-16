@@ -117,7 +117,7 @@ import weewx.restx
 import weewx.units
 from weeutil.weeutil import to_int, to_bool, accumulateLeaves
 
-VERSION = "0.23"
+VERSION = "0.23-rmb-01"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -252,32 +252,38 @@ class MQTT(weewx.restx.StdRESTbase):
         # for backward compatibility: 'units' is now 'unit_system'
         _compat(site_dict, 'units', 'unit_system')
 
-        site_dict.setdefault('client_id', '')
-        site_dict.setdefault('topic', 'weather')
-        site_dict.setdefault('append_units_label', True)
-        site_dict.setdefault('augment_record', True)
-        site_dict.setdefault('obs_to_upload', 'all')
-        site_dict.setdefault('retain', False)
-        site_dict.setdefault('qos', 0)
-        site_dict.setdefault('aggregation', 'individual,aggregate')
-
-        usn = site_dict.get('unit_system', None)
-        if usn is not None:
-            site_dict['unit_system'] = weewx.units.unit_constants[usn]
-
         if 'tls' in config_dict['StdRESTful']['MQTT']:
             site_dict['tls'] = dict(config_dict['StdRESTful']['MQTT']['tls'])
 
-        if 'inputs' in config_dict['StdRESTful']['MQTT']:
-            site_dict['inputs'] = dict(config_dict['StdRESTful']['MQTT']['inputs'])
-
-        site_dict['append_units_label'] = to_bool(site_dict.get('append_units_label'))
-        site_dict['augment_record'] = to_bool(site_dict.get('augment_record'))
-        site_dict['retain'] = to_bool(site_dict.get('retain'))
-        site_dict['qos'] = to_int(site_dict.get('qos'))
+        site_dict['augment_record'] = to_bool(site_dict.get('augment_record', True)) # TODO
         binding = site_dict.pop('binding', 'archive')
         loginf("binding to %s" % binding)
 
+        default_topic = site_dict.get('topic', 'weather')
+        topics = {}
+        topics[default_topic] = {}
+        topics[default_topic]['skip_upload'] = False
+        topics[default_topic]['aggregation'] = site_dict.get('aggregation', 'individual,aggregate')
+        topics[default_topic]['append_units_label'] = to_bool(site_dict.get('append_units_label', True))
+        topics[default_topic]['augment_record'] = to_bool(site_dict.get('augment_record', True))
+        usn = site_dict.get('unit_system', None)
+        if  usn is not None:
+            topics[default_topic]['unit_system'] = weewx.units.unit_constants[usn]
+
+        topics[default_topic]['upload_all'] = True if site_dict.get('obs_to_upload', 'all').lower() == 'all' else False
+
+        topics[default_topic]['retain'] = to_bool(site_dict.get('retain', False))
+        topics[default_topic]['qos'] = to_int(site_dict.get('qos', 0))
+        topics[default_topic]['inputs'] = dict(config_dict['StdRESTful']['MQTT']).get('inputs', {})
+        topics[default_topic]['templates'] = dict()
+
+        mqtt_dict = {}
+        mqtt_dict['server_url'] = site_dict['server_url']
+        mqtt_dict['client_id'] = site_dict.get('client_id', '')
+
+        mqtt_dict['topics'] = topics
+
+        # TODO - need to handle augment_record may only be at the topic level
         # if we are supposed to augment the record with data from weather
         # tables, then get the manager dict to do it.  there may be no weather
         # tables, so be prepared to fail.
@@ -290,9 +296,10 @@ class MQTT(weewx.restx.StdRESTbase):
             pass
 
         self.archive_queue = Queue.Queue()
-        self.archive_thread = MQTTThread(self.archive_queue, **site_dict)
+        self.archive_thread = MQTTThread(self.archive_queue, **mqtt_dict)
         self.archive_thread.start()
 
+        # TODO handle binding at topic level
         if 'archive' in binding:
             self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
         if 'loop' in binding:
@@ -371,11 +378,9 @@ class TLSDefaults(object):
 
 class MQTTThread(weewx.restx.RESTThread):
 
-    def __init__(self, queue, server_url,
-                 client_id='', topic='', unit_system=None, skip_upload=False,
-                 augment_record=True, retain=False, aggregation='individual',
-                 inputs={}, obs_to_upload='all', append_units_label=True,
-                 manager_dict=None, tls=None, qos=0,
+    def __init__(self, queue, server_url, topics,
+                 client_id='',
+                 manager_dict=None, tls=None,
                  post_interval=None, stale=None,
                  log_success=True, log_failure=True,
                  timeout=60, max_tries=3, retry_wait=5,
@@ -393,9 +398,6 @@ class MQTTThread(weewx.restx.RESTThread):
                                          retry_wait=retry_wait)
         self.server_url = server_url
         self.client_id = client_id
-        self.topic = topic
-        self.upload_all = True if obs_to_upload.lower() == 'all' else False
-        self.append_units_label = append_units_label
         self.tls_dict = {}
         if tls is not None:
             # we have TLS options so construct a dict to configure Paho TLS
@@ -410,43 +412,36 @@ class MQTTThread(weewx.restx.RESTThread):
                 elif opt in dflts.TLS_OPTIONS:
                     self.tls_dict[opt] = tls[opt]
             logdbg("TLS parameters: %s" % self.tls_dict)
-        self.inputs = inputs
-        self.unit_system = unit_system
-        self.augment_record = augment_record
-        self.retain = retain
-        self.qos = qos
-        self.aggregation = aggregation
-        self.templates = dict()
-        self.skip_upload = skip_upload
+        self.topics = topics
 
-    def filter_data(self, record):
+    def filter_data(self, upload_all, templates, inputs, append_units_label, record):
         # if uploading everything, we must check the upload variables list
         # every time since variables may come and go in a record.  use the
         # inputs to override any generic template generation.
-        if self.upload_all:
+        if upload_all:
             for f in record:
-                if f not in self.templates:
-                    self.templates[f] = _get_template(f,
-                                                      self.inputs.get(f, {}),
-                                                      self.append_units_label,
-                                                      record['usUnits'])
+                if f not in templates:
+                    templates[f] = _get_template(f,
+                                                 inputs.get(f, {}),
+                                                 append_units_label,
+                                                 record['usUnits'])
 
         # otherwise, create the list of upload variables once, based on the
         # user-specified list of inputs.
-        elif not self.templates:
-            for f in self.inputs:
-                self.templates[f] = _get_template(f, self.inputs[f],
-                                                  self.append_units_label,
-                                                  record['usUnits'])
+        elif not templates:
+            for f in inputs:
+                templates[f] = _get_template(f, inputs[f],
+                                             append_units_label,
+                                             record['usUnits'])
 
         # loop through the templates, populating them with data from the record
         data = dict()
-        for k in self.templates:
+        for k in templates:
             try:
                 v = float(record.get(k))
-                name = self.templates[k].get('name', k)
-                fmt = self.templates[k].get('format', '%s')
-                to_units = self.templates[k].get('units')
+                name = templates[k].get('name', k)
+                fmt = templates[k].get('format', '%s')
+                to_units = templates[k].get('units')
                 if to_units is not None:
                     (from_unit, from_group) = weewx.units.getStandardUnitType(
                         record['usUnits'], k)
@@ -467,15 +462,20 @@ class MQTTThread(weewx.restx.RESTThread):
         return data
 
     def process_record(self, record, dbm):
+        for topic in self.topics:
+            self.process2_record(**self.topics[topic], topic=topic, record=record, dbm=dbm)
+
+    def process2_record(self, record, dbm, topic, skip_upload, upload_all, aggregation, append_units_label,
+                        augment_record, unit_system, retain, qos, inputs, templates):
         import socket
-        if self.augment_record and dbm is not None:
+        if augment_record and dbm is not None:
             record = self.get_record(record, dbm)
-        if self.unit_system is not None:
-            record = weewx.units.to_std_system(record, self.unit_system)
-        data = self.filter_data(record)
+        if unit_system is not None:
+            record = weewx.units.to_std_system(record, unit_system)
+        data = self.filter_data(upload_all, templates, inputs, append_units_label, record)
         if weewx.debug >= 2:
             logdbg("data: %s" % data)
-        if self.skip_upload:
+        if skip_upload:
             loginf("skipping upload")
             return
         url = urlparse(self.server_url)
@@ -493,17 +493,17 @@ class MQTTThread(weewx.restx.RESTThread):
                     mc.tls_set(**self.tls_dict)
                 mc.connect(url.hostname, url.port)
                 mc.loop_start()
-                if self.aggregation.find('aggregate') >= 0:
-                    tpc = self.topic + '/loop'
+                if aggregation.find('aggregate') >= 0:
+                    tpc = topic + '/loop'
                     (res, mid) = mc.publish(tpc, json.dumps(data),
-                                            retain=self.retain, qos=self.qos)
+                                            retain=retain, qos=qos)
                     if res != mqtt.MQTT_ERR_SUCCESS:
                         logerr("publish failed for %s: %s" % (tpc, res))
-                if self.aggregation.find('individual') >= 0:
+                if aggregation.find('individual') >= 0:
                     for key in data:
-                        tpc = self.topic + '/' + key
+                        tpc = topic + '/' + key
                         (res, mid) = mc.publish(tpc, data[key],
-                                                retain=self.retain)
+                                                retain=retain)
                         if res != mqtt.MQTT_ERR_SUCCESS:
                             logerr("publish failed for %s: %s" % (tpc, res))
                 mc.loop_stop()
