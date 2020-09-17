@@ -257,7 +257,7 @@ class MQTT(weewx.restx.StdRESTbase):
 
         topic_configs = site_dict.get('topics', {})
         if not topic_configs:
-            topic = site_dict.get('topic', 'weather')
+            topic = site_dict.get('topic', 'weather/loop')
             site_dict['topics'] = {}
             site_dict['topics'][topic] = {}
             topics = {}
@@ -535,8 +535,7 @@ class MQTTThread(weewx.restx.RESTThread):
                 mc.connect(url.hostname, url.port)
                 mc.loop_start()
                 if aggregation.find('aggregate') >= 0:
-                    tpc = topic + '/loop'
-                    (res, mid) = mc.publish(tpc, json.dumps(data),
+                    (res, mid) = mc.publish(topic, json.dumps(data),
                                             retain=retain, qos=qos)
                     if res != mqtt.MQTT_ERR_SUCCESS:
                         logerr("publish failed for %s: %s" % (tpc, res))
