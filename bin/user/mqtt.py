@@ -85,6 +85,26 @@ Paho client tls_set method.  Refer to Paho client documentation for details:
             #   To specify multiple cyphers, delimit with commas and enclose
             #   in quotes.
             #ciphers =
+            
+Publish to multiple topics and override options specified above:
+
+[StdRestful]
+    [[MQTT]]
+        [[[topics]]]
+            [[[[topic-1]]]]
+                unit_system = METRIC
+                aggregation = individual, aggregate # individual, aggregate, or both
+                binding = loop # options are loop or archive
+                augment_record = True
+                qos = 1        # options are 0, 1, 2
+                retain = true  # options are true or false
+                [[[[[inputs]]]]]
+                    [[[[[[outTemp]]]]]]
+                        name = inside_temperature  # use a label other than outTemp
+                        format = %.2f              # two decimal places of precision
+                        units = degree_F           # convert outTemp to F, others in C      
+          [[[[topic-2]]]]
+    
 """
 
 try:
@@ -300,7 +320,6 @@ class MQTT(weewx.restx.StdRESTbase):
         self.archive_thread = MQTTThread(self.archive_queue, **mqtt_dict)
         self.archive_thread.start()
 
-        # TODO handle binding at topic level
         if archive_binding:
             self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
         if loop_binding:
