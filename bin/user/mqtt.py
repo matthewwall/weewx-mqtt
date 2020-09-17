@@ -292,7 +292,7 @@ class MQTT(weewx.restx.StdRESTbase):
             if augment_record:
                 _manager_dict = weewx.manager.get_manager_dict_from_config(
                     config_dict, 'wx_binding')
-                site_dict['manager_dict'] = _manager_dict
+                mqtt_dict['manager_dict'] = _manager_dict
         except weewx.UnknownBinding:
             pass
 
@@ -481,22 +481,39 @@ class MQTTThread(weewx.restx.RESTThread):
     def process_record(self, record, dbmanager):
         for topic in self.topics:
             if 'interval' in record:
-                print("archive")
                 if 'archive' in self.topics[topic]['binding']:
-                    self.process2_record(**self.topics[topic], topic=topic, record=record, dbm=dbmanager)
+                    data = self.update_record(topic, record, dbmanager)
+                    self.publish_data(data,
+                                      topic,
+                                      self.topics[topic]['skip_upload'],
+                                      self.topics[topic]['aggregation'],
+                                      self.topics[topic]['qos'],
+                                      self.topics[topic]['retain'])
             else:
                 if 'loop' in self.topics[topic]['binding']:
-                    self.process2_record(**self.topics[topic], topic=topic, record=record, dbm=dbmanager)
+                    data = self.update_record(topic, record, dbmanager)
+                    self.publish_data(data,
+                                      topic,
+                                      self.topics[topic]['skip_upload'],
+                                      self.topics[topic]['aggregation'],
+                                      self.topics[topic]['qos'],
+                                      self.topics[topic]['retain'])
 
+    def update_record(self, topic, record, dbmanager):
+        updated_record = dict(record)
+        if self.topics[topic]['augment_record'] and dbmanager is not None:
+            updated_record = self.get_record(updated_record, dbmanager)
+        if self.topics[topic]['unit_system'] is not None:
+            updated_record = weewx.units.to_std_system(updated_record, self.topics[topic]['unit_system'])
+        data = self.filter_data(self.topics[topic]['upload_all'],
+                                self.topics[topic]['templates'],
+                                self.topics[topic]['inputs'],
+                                self.topics[topic]['append_units_label'],
+                                record)
+        return data
 
-    def process2_record(self, record, dbm, topic, binding, skip_upload, upload_all, aggregation, append_units_label,
-                        augment_record, unit_system, retain, qos, inputs, templates):
+    def publish_data(self, data, topic, skip_upload, aggregation, qos, retain):
         import socket
-        if augment_record and dbm is not None:
-            record = self.get_record(record, dbm)
-        if unit_system is not None:
-            record = weewx.units.to_std_system(record, unit_system)
-        data = self.filter_data(upload_all, templates, inputs, append_units_label, record)
         if weewx.debug >= 2:
             logdbg("data: %s" % data)
         if skip_upload:
