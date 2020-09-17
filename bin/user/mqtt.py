@@ -85,7 +85,7 @@ Paho client tls_set method.  Refer to Paho client documentation for details:
             #   To specify multiple cyphers, delimit with commas and enclose
             #   in quotes.
             #ciphers =
-            
+
 Publish to multiple topics and override options specified above:
 
 [StdRestful]
@@ -102,9 +102,9 @@ Publish to multiple topics and override options specified above:
                     [[[[[[outTemp]]]]]]
                         name = inside_temperature  # use a label other than outTemp
                         format = %.2f              # two decimal places of precision
-                        units = degree_F           # convert outTemp to F, others in C      
+                        units = degree_F           # convert outTemp to F, others in C
           [[[[topic-2]]]]
-    
+
 """
 
 try:
@@ -292,6 +292,7 @@ class MQTT(weewx.restx.StdRESTbase):
         mqtt_dict = {}
         mqtt_dict['server_url'] = site_dict['server_url']
         mqtt_dict['client_id'] = site_dict.get('client_id', '')
+        mqtt_dict['persist_connection'] = to_bool(site_dict.get('persist_connection', False))
 
         augment_record = False
         archive_binding = False
@@ -414,7 +415,7 @@ class TLSDefaults(object):
 
 class MQTTThread(weewx.restx.RESTThread):
 
-    def __init__(self, queue, server_url, topics,
+    def __init__(self, queue, server_url, topics, persist_connection,
                  client_id='',
                  manager_dict=None, tls=None,
                  post_interval=None, stale=None,
@@ -434,6 +435,7 @@ class MQTTThread(weewx.restx.RESTThread):
                                          retry_wait=retry_wait)
         self.server_url = server_url
         self.client_id = client_id
+        self.persist_connection = persist_connection
         self.tls_dict = {}
         if tls is not None:
             # we have TLS options so construct a dict to configure Paho TLS
@@ -449,6 +451,9 @@ class MQTTThread(weewx.restx.RESTThread):
                     self.tls_dict[opt] = tls[opt]
             logdbg("TLS parameters: %s" % self.tls_dict)
         self.topics = topics
+        self.mc = None
+        if persist_connection:
+            self.mc = self.connect()
 
     def filter_data(self, upload_all, templates, inputs, append_units_label, record):
         # if uploading everything, we must check the upload variables list
@@ -538,21 +543,12 @@ class MQTTThread(weewx.restx.RESTThread):
         if skip_upload:
             loginf("skipping upload")
             return
-        url = urlparse(self.server_url)
         for _count in range(self.max_tries):
             try:
-                client_id = self.client_id
-                if not client_id:
-                    pad = "%032x" % random.getrandbits(128)
-                    client_id = 'weewx_%s' % pad[:8]
-                mc = mqtt.Client(client_id=client_id)
-                if url.username is not None and url.password is not None:
-                    mc.username_pw_set(url.username, url.password)
-                # if we have TLS opts configure TLS on our broker connection
-                if len(self.tls_dict) > 0:
-                    mc.tls_set(**self.tls_dict)
-                mc.connect(url.hostname, url.port)
-                mc.loop_start()
+                if self.persist_connection:
+                    mc = self.mc
+                else:
+                    mc = self.connect()
                 if aggregation.find('aggregate') >= 0:
                     (res, mid) = mc.publish(topic, json.dumps(data),
                                             retain=retain, qos=qos)
@@ -565,8 +561,8 @@ class MQTTThread(weewx.restx.RESTThread):
                                                 retain=retain)
                         if res != mqtt.MQTT_ERR_SUCCESS:
                             logerr("publish failed for %s: %s" % (tpc, res))
-                mc.loop_stop()
-                mc.disconnect()
+                if not self.persist_connection:
+                    self.disconnect(mc)
                 return
             except (socket.error, socket.timeout, socket.herror) as e:
                 logdbg("Failed upload attempt %d: %s" % (_count+1, e))
@@ -574,3 +570,24 @@ class MQTTThread(weewx.restx.RESTThread):
         else:
             raise weewx.restx.FailedPost("Failed upload after %d tries" %
                                          (self.max_tries,))
+
+    def connect(self):
+        url = urlparse(self.server_url)
+        client_id = self.client_id
+        if not client_id:
+            pad = "%032x" % random.getrandbits(128)
+            client_id = 'weewx_%s' % pad[:8]
+        mc = mqtt.Client(client_id=client_id)
+        if url.username is not None and url.password is not None:
+            mc.username_pw_set(url.username, url.password)
+        # if we have TLS opts configure TLS on our broker connection
+        if len(self.tls_dict) > 0:
+            mc.tls_set(**self.tls_dict)
+        mc.connect(url.hostname, url.port)
+        mc.loop_start()
+
+        return mc
+
+    def disconnect(self, mc):
+        mc.loop_stop()
+        mc.disconnect()
