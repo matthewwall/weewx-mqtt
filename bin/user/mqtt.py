@@ -14,6 +14,7 @@ Minimal configuration:
         server_url = mqtt://username:password@localhost:1883/
         topic = weather
         unit_system = METRIC
+        persist_connection = False # persist the connection across publishing data
 
 Other MQTT options can be specified:
 
