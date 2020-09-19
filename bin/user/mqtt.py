@@ -136,9 +136,9 @@ except (ImportError, AttributeError):
 import weewx
 import weewx.restx
 import weewx.units
-from weeutil.weeutil import to_int, to_bool, accumulateLeaves
+from weeutil.weeutil import to_int, to_bool
 
-VERSION = "0.23-rmb-01"
+VERSION = "0.23"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -264,7 +264,6 @@ class MQTT(weewx.restx.StdRESTbase):
         loginf("service version is %s" % VERSION)
         try:
             site_dict = config_dict['StdRESTful']['MQTT']
-            #site_dict = accumulateLeaves(site_dict, max_level=1)
             site_dict['server_url']
         except KeyError as e:
             logerr("Data will not be uploaded: Missing option %s" % e)
