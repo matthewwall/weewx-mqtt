@@ -277,13 +277,24 @@ class MQTT(weewx.restx.StdRESTbase):
 
         topic_configs = site_dict.get('topics', {})
         if not topic_configs:
-            topic = site_dict.get('topic', 'weather/loop')
-            site_dict['topics'] = {}
-            site_dict['topics'][topic] = {}
+            aggregation = site_dict.get('aggregation', 'individual,aggregate')
             topics = {}
-            topics[topic] = {}
-            self.init_topic_dict(topic, site_dict, topics[topic])
+            if aggregation.find('aggregate') >= 0:
+                topic = site_dict.get('topic', 'weather') + '/loop'
+                site_dict['topics'] = {}
+                site_dict['topics'][topic] = {}
+                topics[topic] = {}
+                self.init_topic_dict(topic, site_dict, topics[topic], aggregation='aggregate')
+
+            if aggregation.find('individual') >= 0:
+                topic = site_dict.get('topic', 'weather')
+                site_dict['topics'] = {}
+                site_dict['topics'][topic] = {}
+                topics[topic] = {}
+                self.init_topic_dict(topic, site_dict, topics[topic], aggregation='individual')
         else:
+            if site_dict.get('topic', None) is not None:
+                loginf("'topics' configuration option found, ignoring 'topic' option")
             topics = {}
             for topic in topic_configs:
                 topics[topic] = {}
@@ -339,10 +350,13 @@ class MQTT(weewx.restx.StdRESTbase):
     def new_loop_packet(self, event):
         self.archive_queue.put(event.packet)
 
-    def init_topic_dict(self, topic, site_dict, topic_dict):
+    def init_topic_dict(self, topic, site_dict, topic_dict, aggregation=None):
         topic_dict['skip_upload'] = False
         topic_dict['binding'] = site_dict['topics'][topic].get('binding', site_dict.get('binding', 'archive'))
-        topic_dict['aggregation'] = site_dict['topics'][topic].get('aggregation', site_dict.get('aggregation', 'individual,aggregate'))
+        if aggregation is None:
+            topic_dict['aggregation'] = site_dict['topics'][topic].get('aggregation', site_dict.get('aggregation', 'individual,aggregate'))
+        else:
+            topic_dict['aggregation'] = aggregation
         topic_dict['append_units_label'] = to_bool(site_dict['topics'][topic].get('append_units_label', site_dict.get('append_units_label', True)))
         topic_dict['augment_record'] = to_bool(site_dict['topics'][topic].get('augment_record', site_dict.get('augment_record', True)))
         usn = site_dict['topics'][topic].get('unit_system', site_dict.get('unit_system', None))
