@@ -304,6 +304,8 @@ class MQTT(weewx.restx.StdRESTbase):
         mqtt_dict['server_url'] = site_dict['server_url']
         mqtt_dict['client_id'] = site_dict.get('client_id', '')
         mqtt_dict['persist_connection'] = to_bool(site_dict.get('persist_connection', False))
+        mqtt_dict['log_success'] = to_bool(site_dict.get('log_success', True))
+        mqtt_dict['log_failure'] = to_bool(site_dict.get('log_failure', True))
 
         augment_record = False
         archive_binding = False
