@@ -304,8 +304,13 @@ class MQTT(weewx.restx.StdRESTbase):
         mqtt_dict['server_url'] = site_dict['server_url']
         mqtt_dict['client_id'] = site_dict.get('client_id', '')
         mqtt_dict['persist_connection'] = to_bool(site_dict.get('persist_connection', False))
+        mqtt_dict['tls'] = site_dict.get('tls', None)
         mqtt_dict['log_success'] = to_bool(site_dict.get('log_success', True))
         mqtt_dict['log_failure'] = to_bool(site_dict.get('log_failure', True))
+        mqtt_dict['post_interval'] = to_int(site_dict.get('post_interval', None))
+        mqtt_dict['timeout'] = to_int(site_dict.get('timeout', 60))
+        mqtt_dict['max_tries'] = to_int(site_dict.get('max_tries', 3))
+        mqtt_dict['retry_wait'] = to_int(site_dict.get('retry_wait', 5))
 
         augment_record = False
         archive_binding = False
