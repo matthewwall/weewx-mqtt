@@ -51,6 +51,13 @@ Use the inputs map to customize name, format, or units for any observation:
             [[[[windSpeed]]]]
                 units = knot  # convert the wind speed to knots
 
+To change the data binding:
+
+[StdRestful]
+    [[MQTT]]
+        ...
+        data_binding = wx_binding # or any other valid data binding
+
 Use TLS to encrypt connection to broker.  The TLS options will be passed to
 Paho client tls_set method.  Refer to Paho client documentation for details:
 
@@ -277,6 +284,8 @@ class MQTT(weewx.restx.StdRESTbase):
         site_dict['qos'] = to_int(site_dict.get('qos'))
         binding = site_dict.pop('binding', 'archive')
         loginf("binding to %s" % binding)
+        data_binding = site_dict.pop('data_binding', 'wx_binding')
+        loginf("data_binding is %s" % data_binding)
 
         # if we are supposed to augment the record with data from weather
         # tables, then get the manager dict to do it.  there may be no weather
@@ -284,7 +293,7 @@ class MQTT(weewx.restx.StdRESTbase):
         try:
             if site_dict.get('augment_record'):
                 _manager_dict = weewx.manager.get_manager_dict_from_config(
-                    config_dict, 'wx_binding')
+                    config_dict, data_binding)
                 site_dict['manager_dict'] = _manager_dict
         except weewx.UnknownBinding:
             pass
