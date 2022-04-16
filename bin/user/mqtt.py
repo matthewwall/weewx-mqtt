@@ -1,4 +1,4 @@
-# Copyright 2013-2020 Matthew Wall
+# Copyright 2013-2022 Matthew Wall
 # Distributed under the terms of the GNU Public License (GPLv3)
 """
 Upload data to MQTT server
@@ -37,7 +37,9 @@ Bind to loop packets or archive records:
         ...
         binding = loop # options are loop or archive
 
-Use the inputs map to customize name, format, or units for any observation:
+Use the inputs map to customize name, format, or unit for any observation.
+Note that starting with v0.24, option 'units' was renamed to 'unit', although
+either will be accepted.
 
 [StdRestful]
     [[MQTT]]
@@ -47,9 +49,9 @@ Use the inputs map to customize name, format, or units for any observation:
             [[[[outTemp]]]]
                 name = inside_temperature  # use a label other than outTemp
                 format = %.2f              # two decimal places of precision
-                units = degree_F           # convert outTemp to F, others in C
+                unit = degree_F            # convert outTemp to F, others in C
             [[[[windSpeed]]]]
-                units = knot  # convert the wind speed to knots
+                unit = knot  # convert the wind speed to knots
 
 Use TLS to encrypt connection to broker.  The TLS options will be passed to
 Paho client tls_set method.  Refer to Paho client documentation for details:
@@ -117,7 +119,7 @@ import weewx.restx
 import weewx.units
 from weeutil.weeutil import to_int, to_bool, accumulateLeaves
 
-VERSION = "0.23"
+VERSION = "0.24"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -194,11 +196,11 @@ def _get_units_label(obs, unit_system, unit_type=None):
 def _get_template(obs_key, overrides, append_units_label, unit_system):
     tmpl_dict = dict()
     if append_units_label:
-        unit_type = overrides.get('units')
+        unit_type = overrides.get('unit')
         label = _get_units_label(obs_key, unit_system, unit_type)
         if label is not None:
             tmpl_dict['name'] = "%s_%s" % (obs_key, label)
-    for x in ['name', 'format', 'units']:
+    for x in ['name', 'format', 'unit']:
         if x in overrides:
             tmpl_dict[x] = overrides[x]
     return tmpl_dict
@@ -241,12 +243,8 @@ class MQTT(weewx.restx.StdRESTbase):
         """
         super(MQTT, self).__init__(engine, config_dict)
         loginf("service version is %s" % VERSION)
-        try:
-            site_dict = config_dict['StdRESTful']['MQTT']
-            site_dict = accumulateLeaves(site_dict, max_level=1)
-            site_dict['server_url']
-        except KeyError as e:
-            logerr("Data will not be uploaded: Missing option %s" % e)
+        site_dict = weewx.restx.get_site_dict(config_dict, 'MQTT', 'server_url')
+        if not site_dict:
             return
 
         # for backward compatibility: 'units' is now 'unit_system'
@@ -270,6 +268,9 @@ class MQTT(weewx.restx.StdRESTbase):
 
         if 'inputs' in config_dict['StdRESTful']['MQTT']:
             site_dict['inputs'] = dict(config_dict['StdRESTful']['MQTT']['inputs'])
+            # In the 'inputs' section, option 'units' is now 'unit'.
+            for obs_type in site_dict['inputs']:
+                _compat(site_dict['inputs'][obs_type], 'units', 'unit')
 
         site_dict['append_units_label'] = to_bool(site_dict.get('append_units_label'))
         site_dict['augment_record'] = to_bool(site_dict.get('augment_record'))
@@ -446,7 +447,7 @@ class MQTTThread(weewx.restx.RESTThread):
                 v = float(record.get(k))
                 name = self.templates[k].get('name', k)
                 fmt = self.templates[k].get('format', '%s')
-                to_units = self.templates[k].get('units')
+                to_units = self.templates[k].get('unit')
                 if to_units is not None:
                     (from_unit, from_group) = weewx.units.getStandardUnitType(
                         record['usUnits'], k)

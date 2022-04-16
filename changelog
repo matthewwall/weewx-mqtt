@@ -1,3 +1,6 @@
+0.24 16apr2022
+* renamed option 'units' to 'unit', although either will be accepted.
+
 0.23 10may2020
 * fixed unit label for specialized observations (thanks to mbradley)
 
