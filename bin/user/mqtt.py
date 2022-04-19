@@ -87,6 +87,21 @@ Paho client tls_set method.  Refer to Paho client documentation for details:
             #   To specify multiple cyphers, delimit with commas and enclose
             #   in quotes.
             #ciphers =
+            
+To send aggregated values, define them in section 
+
+[StdRestful]
+    [[MQTT]]
+        ...
+        [[[calculations]]]
+            aggobs = period.obstype.aggtype
+            
+aggobs: the name you give the aggregated value
+period: one of 'day', 'yesterday', 'week', 'month', 'year'
+obstype: an observation type in the packet
+aggtype: an aggregation to be perfomed on the observation type
+There can be multiple lines like that.
+
 """
 
 try:
@@ -118,8 +133,10 @@ import weewx
 import weewx.restx
 import weewx.units
 from weeutil.weeutil import to_int, to_bool, accumulateLeaves
+import weeutil.weeutil
+import weewx.xtypes
 
-VERSION = "0.24"
+VERSION = "0.25"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -271,6 +288,9 @@ class MQTT(weewx.restx.StdRESTbase):
             # In the 'inputs' section, option 'units' is now 'unit'.
             for obs_type in site_dict['inputs']:
                 _compat(site_dict['inputs'][obs_type], 'units', 'unit')
+        
+        if 'calculations' in config_dict['StdRESTful']['MQTT']:
+            site_dict['calculations'] = config_dict['StdRESTful']['MQTT']['calculations']
 
         site_dict['append_units_label'] = to_bool(site_dict.get('append_units_label'))
         site_dict['augment_record'] = to_bool(site_dict.get('augment_record'))
@@ -380,7 +400,8 @@ class MQTTThread(weewx.restx.RESTThread):
                  post_interval=None, stale=None,
                  log_success=True, log_failure=True,
                  timeout=60, max_tries=3, retry_wait=5,
-                 max_backlog=sys.maxsize):
+                 max_backlog=sys.maxsize,
+                 calculations={'dayRain':'day.rain.sum'}):
         super(MQTTThread, self).__init__(queue,
                                          protocol_name='MQTT',
                                          manager_dict=manager_dict,
@@ -412,6 +433,7 @@ class MQTTThread(weewx.restx.RESTThread):
                     self.tls_dict[opt] = tls[opt]
             logdbg("TLS parameters: %s" % self.tls_dict)
         self.inputs = inputs
+        self.calculations = calculations
         self.unit_system = unit_system
         self.augment_record = augment_record
         self.retain = retain
@@ -516,3 +538,53 @@ class MQTTThread(weewx.restx.RESTThread):
         else:
             raise weewx.restx.FailedPost("Failed upload after %d tries" %
                                          (self.max_tries,))
+
+    PERIODS = {
+        'day':lambda _time_ts:weeutil.weeutil.archiveDaySpan(_time_ts),
+        'yesterday':lambda _time_ts:weeutil.weeutil.archiveDaySpan(_time_ts,1,1),
+        'week':lambda _time_ts:weeutil.weeutil.archiveWeekSpan(_time_ts),
+        'month':lambda _time_ts:weeutil.weeutil.archiveMonthSpan(_time_ts),
+        'year':lambda _time_ts:weeutil.weeutil.archiveYearSpan(_time_ts)}
+
+    def get_record(self, record, dbmanager):
+        """Augment record data with additional data from the archive.
+        Should return results in the same units as the record and the database.
+        
+        returns: A dictionary of weather values"""
+    
+        # run parent class
+        _datadict = super(MQTTThread,self).get_record(record,dbmanager)
+
+        # actual time stamp
+        _time_ts = _datadict['dateTime']
+        
+        # go through all calculations
+        for agg_obs in self.calculations:
+            try:
+                tag = self.calculations[agg_obs].split('.')
+                if len(tag)==3:
+                    # example: day.rain.sum
+                    # '$' at the beginning is possible but not necessary
+                    if tag[0][0]=='$': tag[0] = tag[0][1:]
+                    # time period (day, yesterday, week, month, year)
+                    if tag[0] not in MQTTThread.PERIODS: 
+                        raise ValueError("unknown time period '%s'" % tag[0])
+                    ts = MQTTThread.PERIODS[tag[0]](_time_ts)
+                    # If the observation type is in _datadict, calculate
+                    # the aggregation.
+                    # Note: It is no error, if the observation type is not
+                    #       in _datadict, as _datadict can be a LOOP packet
+                    #       that does not contain all the observation
+                    #       types.
+                    if tag[1] in _datadict:
+                        # get aggregate value
+                        __result = weewx.xtypes.get_aggregate(tag[1],ts,tag[2],dbmanager)
+                        # convert to unit system of _datadict
+                        _datadict[agg_obs] = weewx.units.convertStd(__result,_datadict['usUnits'])[0]
+                        # register name with unit group if necessary
+                        weewx.units.obs_group_dict.setdefault(agg_obs,__result[2])
+            except (LookupError,ValueError,TypeError,weewx.UnknownType,weewx.UnknownAggregation,weewx.CannotCalculate) as e:
+                logerr('%s = %s: error %s' % (obs,tag,e))
+        
+        return _datadict
+
