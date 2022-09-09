@@ -560,7 +560,6 @@ class MQTTThread(weewx.restx.RESTThread):
                     logerr("publish failed for %s: %s" %
                            (tpc, mqtt.error_string(res)))
 
-
     PERIODS = {
         'day':lambda _time_ts:weeutil.weeutil.archiveDaySpan(_time_ts),
         'yesterday':lambda _time_ts:weeutil.weeutil.archiveDaySpan(_time_ts,1,1),
