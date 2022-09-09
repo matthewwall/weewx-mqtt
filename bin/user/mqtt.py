@@ -604,6 +604,8 @@ class MQTTThread(weewx.restx.RESTThread):
                         _datadict[agg_obs] = weewx.units.convertStd(__result,_datadict['usUnits'])[0]
                         # register name with unit group if necessary
                         weewx.units.obs_group_dict.setdefault(agg_obs,__result[2])
+                else:
+                    logerr("syntax error in %s: timespan.obstype.aggregation required" % self.calculations[agg_obs])
             except (LookupError,ValueError,TypeError,weewx.UnknownType,weewx.UnknownAggregation,weewx.CannotCalculate) as e:
                 logerr('%s = %s: error %s' % (obs,tag,e))
         
