@@ -443,7 +443,6 @@ class MQTTThread(weewx.restx.RESTThread):
                     self.tls_dict[opt] = tls[opt]
             logdbg("TLS parameters: %s" % self.tls_dict)
         self.inputs = inputs
-        self.aggregations = aggregations
         self.unit_system = unit_system
         self.augment_record = augment_record
         self.retain = retain
@@ -453,6 +452,25 @@ class MQTTThread(weewx.restx.RESTThread):
         self.skip_upload = skip_upload
         self.mc = None
         self.mc_try_time = 0
+        
+        self.aggregations = dict()
+        for agg_obs in aggregations:
+            # split definition into its parts timespan, observation type, and 
+            # aggregation type
+            tag = aggregations[agg_obs].split('.')
+            # see whether all 3 parts are present
+            if len(tag)==3:
+                # example: day.rain.sum
+                # '$' at the beginning is possible but not necessary
+                if tag[0][0]=='$': tag[0] = tag[0][1:]
+                # timespan (day, yesterday, week, month, year)
+                if tag[0] not in MQTTThread.PERIODS: 
+                    logerr("unknown time period '%s' for '%s'" % (tag[0],agg_obs))
+                else:
+                    self.aggregations[agg_obs] = tag
+            else:
+                logerr("syntax error in %s: timespan.obstype.aggregation required" % self.aggregations[agg_obs])
+        
 
     def get_mqtt_client(self):
         if self.mc:
@@ -581,36 +599,27 @@ class MQTTThread(weewx.restx.RESTThread):
 
         # go through all aggregations
         for agg_obs in self.aggregations:
-            # split definition into its parts timespan, observation type, and 
-            # aggregation type
-            tag = self.aggregations[agg_obs].split('.')
-            # see whether all 3 parts are present
-            if len(tag)==3:
-                # example: day.rain.sum
-                # '$' at the beginning is possible but not necessary
-                if tag[0][0]=='$': tag[0] = tag[0][1:]
-                # If the observation type is in _datadict, calculate
-                # the aggregation.
-                # Note: It is no error, if the observation type is not
-                #       in _datadict, as _datadict can be a LOOP packet
-                #       that does not contain all the observation
-                #       types. 
-                if tag[1] in _datadict:
-                    # time period (day, yesterday, week, month, year)
-                    if tag[0] not in MQTTThread.PERIODS: 
-                        logerr("unknown time period '%s' for '%s'" % (tag[0],agg_obs))
-                    else:
-                        ts = MQTTThread.PERIODS[tag[0]](_time_ts)
-                        try:
-                            # get aggregate value
-                            __result = weewx.xtypes.get_aggregate(tag[1],ts,tag[2],dbmanager)
-                            # convert to unit system of _datadict
-                            _datadict[agg_obs] = weewx.units.convertStd(__result,_datadict['usUnits'])[0]
-                            # register name with unit group if necessary
-                            weewx.units.obs_group_dict.setdefault(agg_obs,__result[2])
-                        except (LookupError,ValueError,TypeError,weewx.UnknownType,weewx.UnknownAggregation,weewx.CannotCalculate) as e:
-                            logerr('%s = %s: error %s' % (obs,tag,e))
-            else:
-                logerr("syntax error in %s: timespan.obstype.aggregation required" % self.aggregations[agg_obs])
+            tag = self.aggregations[agg_obs]
+            # If the observation type is in _datadict, calculate
+            # the aggregation.
+            # Note: It is no error, if the observation type is not
+            #       in _datadict, as _datadict can be a LOOP packet
+            #       that does not contain all the observation
+            #       types. 
+            if tag[1] in _datadict:
+                # get timespan
+                # (There is no need for error handling regarding  the 
+                # presence of tag[0] in PERIODS here, as this is already
+                # done in initialization.)
+                ts = MQTTThread.PERIODS[tag[0]](_time_ts)
+                try:
+                    # get aggregate value
+                    __result = weewx.xtypes.get_aggregate(tag[1],ts,tag[2],dbmanager)
+                    # convert to unit system of _datadict
+                    _datadict[agg_obs] = weewx.units.convertStd(__result,_datadict['usUnits'])[0]
+                    # register name with unit group if necessary
+                    weewx.units.obs_group_dict.setdefault(agg_obs,__result[2])
+                except (LookupError,ValueError,TypeError,weewx.UnknownType,weewx.UnknownAggregation,weewx.CannotCalculate) as e:
+                    logerr('%s = %s: error %s' % (obs,tag,e))
         
         return _datadict
