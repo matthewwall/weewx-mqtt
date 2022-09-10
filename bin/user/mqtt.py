@@ -581,15 +581,15 @@ class MQTTThread(weewx.restx.RESTThread):
 
         # go through all aggregations
         for agg_obs in self.aggregations:
-            try:
-                tag = self.aggregations[agg_obs].split('.')
-                if len(tag)==3:
-                    # example: day.rain.sum
-                    # '$' at the beginning is possible but not necessary
-                    if tag[0][0]=='$': tag[0] = tag[0][1:]
-                    # time period (day, yesterday, week, month, year)
-                    if tag[0] not in MQTTThread.PERIODS: 
-                        raise ValueError("unknown time period '%s'" % tag[0])
+            tag = self.aggregations[agg_obs].split('.')
+            if len(tag)==3:
+                # example: day.rain.sum
+                # '$' at the beginning is possible but not necessary
+                if tag[0][0]=='$': tag[0] = tag[0][1:]
+                # time period (day, yesterday, week, month, year)
+                if tag[0] not in MQTTThread.PERIODS: 
+                    logerr("unknown time period '%s' for '%s'" % (tag[0],agg_obs))
+                else:
                     ts = MQTTThread.PERIODS[tag[0]](_time_ts)
                     # If the observation type is in _datadict, calculate
                     # the aggregation.
@@ -598,15 +598,16 @@ class MQTTThread(weewx.restx.RESTThread):
                     #       that does not contain all the observation
                     #       types.
                     if tag[1] in _datadict:
-                        # get aggregate value
-                        __result = weewx.xtypes.get_aggregate(tag[1],ts,tag[2],dbmanager)
-                        # convert to unit system of _datadict
-                        _datadict[agg_obs] = weewx.units.convertStd(__result,_datadict['usUnits'])[0]
-                        # register name with unit group if necessary
-                        weewx.units.obs_group_dict.setdefault(agg_obs,__result[2])
-                else:
-                    logerr("syntax error in %s: timespan.obstype.aggregation required" % self.aggregations[agg_obs])
-            except (LookupError,ValueError,TypeError,weewx.UnknownType,weewx.UnknownAggregation,weewx.CannotCalculate) as e:
-                logerr('%s = %s: error %s' % (obs,tag,e))
+                        try:
+                            # get aggregate value
+                            __result = weewx.xtypes.get_aggregate(tag[1],ts,tag[2],dbmanager)
+                            # convert to unit system of _datadict
+                            _datadict[agg_obs] = weewx.units.convertStd(__result,_datadict['usUnits'])[0]
+                            # register name with unit group if necessary
+                            weewx.units.obs_group_dict.setdefault(agg_obs,__result[2])
+                        except (LookupError,ValueError,TypeError,weewx.UnknownType,weewx.UnknownAggregation,weewx.CannotCalculate) as e:
+                            logerr('%s = %s: error %s' % (obs,tag,e))
+            else:
+                logerr("syntax error in %s: timespan.obstype.aggregation required" % self.aggregations[agg_obs])
         
         return _datadict
