@@ -469,7 +469,7 @@ class MQTTThread(weewx.restx.RESTThread):
                 else:
                     self.aggregations[agg_obs] = tag
             else:
-                logerr("syntax error in %s: timespan.obstype.aggregation required" % self.aggregations[agg_obs])
+                logerr("syntax error in %s: timespan.obstype.aggregation required" % aggregations[agg_obs])
         
 
     def get_mqtt_client(self):
