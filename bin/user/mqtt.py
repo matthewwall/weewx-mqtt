@@ -581,23 +581,26 @@ class MQTTThread(weewx.restx.RESTThread):
 
         # go through all aggregations
         for agg_obs in self.aggregations:
+            # split definition into its parts timespan, observation type, and 
+            # aggregation type
             tag = self.aggregations[agg_obs].split('.')
+            # see whether all 3 parts are present
             if len(tag)==3:
                 # example: day.rain.sum
                 # '$' at the beginning is possible but not necessary
                 if tag[0][0]=='$': tag[0] = tag[0][1:]
-                # time period (day, yesterday, week, month, year)
-                if tag[0] not in MQTTThread.PERIODS: 
-                    logerr("unknown time period '%s' for '%s'" % (tag[0],agg_obs))
-                else:
-                    ts = MQTTThread.PERIODS[tag[0]](_time_ts)
-                    # If the observation type is in _datadict, calculate
-                    # the aggregation.
-                    # Note: It is no error, if the observation type is not
-                    #       in _datadict, as _datadict can be a LOOP packet
-                    #       that does not contain all the observation
-                    #       types.
-                    if tag[1] in _datadict:
+                # If the observation type is in _datadict, calculate
+                # the aggregation.
+                # Note: It is no error, if the observation type is not
+                #       in _datadict, as _datadict can be a LOOP packet
+                #       that does not contain all the observation
+                #       types. 
+                if tag[1] in _datadict:
+                    # time period (day, yesterday, week, month, year)
+                    if tag[0] not in MQTTThread.PERIODS: 
+                        logerr("unknown time period '%s' for '%s'" % (tag[0],agg_obs))
+                    else:
+                        ts = MQTTThread.PERIODS[tag[0]](_time_ts)
                         try:
                             # get aggregate value
                             __result = weewx.xtypes.get_aggregate(tag[1],ts,tag[2],dbmanager)
