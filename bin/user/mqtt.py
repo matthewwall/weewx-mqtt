@@ -100,7 +100,7 @@ To send aggregated values, define them in section
 [StdRestful]
     [[MQTT]]
         ...
-        [[[calculations]]]
+        [[[aggregations]]]
             aggobs = period.obstype.aggtype
 
 aggobs: the name you give the aggregated value
@@ -297,8 +297,8 @@ class MQTT(weewx.restx.StdRESTbase):
             for obs_type in site_dict['inputs']:
                 _compat(site_dict['inputs'][obs_type], 'units', 'unit')
 
-        if 'calculations' in config_dict['StdRESTful']['MQTT']:
-            site_dict['calculations'] = config_dict['StdRESTful']['MQTT']['calculations']
+        if 'aggregations' in config_dict['StdRESTful']['MQTT']:
+            site_dict['aggregations'] = config_dict['StdRESTful']['MQTT']['aggregations']
 
         site_dict['append_units_label'] = to_bool(site_dict.get('append_units_label'))
         site_dict['augment_record'] = to_bool(site_dict.get('augment_record'))
@@ -411,7 +411,7 @@ class MQTTThread(weewx.restx.RESTThread):
                  log_success=True, log_failure=True,
                  timeout=60, max_tries=3, retry_wait=5,
                  max_backlog=sys.maxsize,
-                 calculations={'dayRain':'day.rain.sum'}):
+                 aggregations={'dayRain':'day.rain.sum'}):
         super(MQTTThread, self).__init__(queue,
                                          protocol_name='MQTT',
                                          manager_dict=manager_dict,
@@ -443,7 +443,7 @@ class MQTTThread(weewx.restx.RESTThread):
                     self.tls_dict[opt] = tls[opt]
             logdbg("TLS parameters: %s" % self.tls_dict)
         self.inputs = inputs
-        self.calculations = calculations
+        self.aggregations = aggregations
         self.unit_system = unit_system
         self.augment_record = augment_record
         self.retain = retain
@@ -579,10 +579,10 @@ class MQTTThread(weewx.restx.RESTThread):
         # actual time stamp
         _time_ts = _datadict['dateTime']
 
-        # go through all calculations
-        for agg_obs in self.calculations:
+        # go through all aggregations
+        for agg_obs in self.aggregations:
             try:
-                tag = self.calculations[agg_obs].split('.')
+                tag = self.aggregations[agg_obs].split('.')
                 if len(tag)==3:
                     # example: day.rain.sum
                     # '$' at the beginning is possible but not necessary
@@ -605,7 +605,7 @@ class MQTTThread(weewx.restx.RESTThread):
                         # register name with unit group if necessary
                         weewx.units.obs_group_dict.setdefault(agg_obs,__result[2])
                 else:
-                    logerr("syntax error in %s: timespan.obstype.aggregation required" % self.calculations[agg_obs])
+                    logerr("syntax error in %s: timespan.obstype.aggregation required" % self.aggregations[agg_obs])
             except (LookupError,ValueError,TypeError,weewx.UnknownType,weewx.UnknownAggregation,weewx.CannotCalculate) as e:
                 logerr('%s = %s: error %s' % (obs,tag,e))
         
