@@ -620,6 +620,6 @@ class MQTTThread(weewx.restx.RESTThread):
                     # register name with unit group if necessary
                     weewx.units.obs_group_dict.setdefault(agg_obs,__result[2])
                 except (LookupError,ValueError,TypeError,weewx.UnknownType,weewx.UnknownAggregation,weewx.CannotCalculate) as e:
-                    logerr('%s = %s: error %s' % (obs,tag,e))
+                    logerr('%s = %s: error %s' % (agg_obs,tag,e))
         
         return _datadict
