@@ -100,7 +100,7 @@ To send aggregated values, define them in section
 [StdRestful]
     [[MQTT]]
         ...
-        [[[aggregations]]]
+        [[[augmentations]]]
             aggobs = period.obstype.aggtype
 
 aggobs: the name you give the aggregated value
@@ -297,8 +297,8 @@ class MQTT(weewx.restx.StdRESTbase):
             for obs_type in site_dict['inputs']:
                 _compat(site_dict['inputs'][obs_type], 'units', 'unit')
 
-        if 'aggregations' in config_dict['StdRESTful']['MQTT']:
-            site_dict['aggregations'] = config_dict['StdRESTful']['MQTT']['aggregations']
+        if 'augmentations' in config_dict['StdRESTful']['MQTT']:
+            site_dict['augmentations'] = config_dict['StdRESTful']['MQTT']['augmentations']
 
         site_dict['append_units_label'] = to_bool(site_dict.get('append_units_label'))
         site_dict['augment_record'] = to_bool(site_dict.get('augment_record'))
@@ -411,7 +411,7 @@ class MQTTThread(weewx.restx.RESTThread):
                  log_success=True, log_failure=True,
                  timeout=60, max_tries=3, retry_wait=5,
                  max_backlog=sys.maxsize,
-                 aggregations={'dayRain':'day.rain.sum'}):
+                 augmentations={'dayRain':'day.rain.sum'}):
         super(MQTTThread, self).__init__(queue,
                                          protocol_name='MQTT',
                                          manager_dict=manager_dict,
@@ -453,11 +453,11 @@ class MQTTThread(weewx.restx.RESTThread):
         self.mc = None
         self.mc_try_time = 0
         
-        self.aggregations = dict()
-        for agg_obs in aggregations:
+        self.augmentations = dict()
+        for agg_obs in augmentations:
             # split definition into its parts timespan, observation type, and 
             # aggregation type
-            tag = aggregations[agg_obs].split('.')
+            tag = augmentations[agg_obs].split('.')
             # see whether all 3 parts are present
             if len(tag)==3:
                 # example: day.rain.sum
@@ -467,9 +467,9 @@ class MQTTThread(weewx.restx.RESTThread):
                 if tag[0] not in MQTTThread.PERIODS: 
                     logerr("unknown time period '%s' for '%s'" % (tag[0],agg_obs))
                 else:
-                    self.aggregations[agg_obs] = tag
+                    self.augmentations[agg_obs] = tag
             else:
-                logerr("syntax error in %s: timespan.obstype.aggregation required" % aggregations[agg_obs])
+                logerr("syntax error in %s: timespan.obstype.aggregation required" % augmentations[agg_obs])
         
 
     def get_mqtt_client(self):
@@ -597,9 +597,9 @@ class MQTTThread(weewx.restx.RESTThread):
         # actual time stamp
         _time_ts = _datadict['dateTime']
 
-        # go through all aggregations
-        for agg_obs in self.aggregations:
-            tag = self.aggregations[agg_obs]
+        # go through all augmentations
+        for agg_obs in self.augmentations:
+            tag = self.augmentations[agg_obs]
             # If the observation type is in _datadict, calculate
             # the aggregation.
             # Note: It is no error, if the observation type is not
