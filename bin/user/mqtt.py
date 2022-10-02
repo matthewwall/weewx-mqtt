@@ -434,6 +434,7 @@ class MQTTThread(weewx.restx.RESTThread):
 
     def get_mqtt_client(self):
         if self.mc:
+            mc.publish(self.topic + '/availability', payload='online', retain=True)
             return
         if time.time() - self.mc_try_time < self.retry_wait:
             return
