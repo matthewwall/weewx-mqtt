@@ -94,6 +94,18 @@ Paho client tls_set method.  Refer to Paho client documentation for details:
             #   To specify multiple cyphers, delimit with commas and enclose
             #   in quotes.
             #ciphers =
+			
+[StdRestful]
+    [[MQTT]]
+        ...
+            ha_discovery = True # Options are True or False, default False
+            # Activate mqtt_discovery for home automation systems (devices) supproting that feature
+            ha_discovery_topic = homeassistant/sensor/weewx # default None
+            # root topic for discovery of devices on the network. If left empty discovery will be disabled.
+            # based on the MQTT Discovery implementation for Home Assitant - https://www.home-assistant.io/docs/mqtt/discovery/
+            ha_device_name = 'My weewx device' # default None
+            # Unique name of the weewx device for publishing all sensors as one multi-sensor device. Will be used also as the name of the device inside HomeAssitant
+            # If left empty all sensors will be published separately. 
 """
 
 try:
@@ -193,7 +205,60 @@ UNIT_REDUCTIONS = {
     'percent': None,
     'unix_epoch': None,
     }
-
+# The type of data delivered by a sensor, impacts how it is displayed in the frontend of HomeAssistant.
+# Each sensor can have defined device_class and/or unit_of_measurement passed in configuration
+# https://www.home-assistant.io/integrations/sensor/
+HA_SENSOR_TYPE = {
+    'degree_F': 'temperature',
+    'degree_C': 'temperature',
+    'mbar': 'pressure',	
+    'inch': 'distance',
+    'cm': 'distance',
+    'meter': 'distance',
+    'mile': 'distance',
+    'mile_per_hour': 'speed',
+    'mile_per_hour2': 'speed',
+    'cm_per_hour': 'speed',
+    'cm_per_hour2': 'speed',   
+    'km_per_hour': 'speed',
+    'km_per_hour2': 'speed',
+    'knot': 'speed',
+    'knot2': 'speed',
+    'meter_per_second': 'speed',
+    'meter_per_second2': 'speed',
+    'degree_compass': None,
+    'watt_per_meter_squared': 'power',
+    'uv_index': None,
+    'percent': 'humidity',
+    'unix_epoch': 'timestamp',
+    'volt' : 'voltage'
+    }
+#https://github.com/home-assistant/core/blob/dev/homeassistant/const.py
+HA_SENSOR_UNIT = {
+    'degree_F': '°F',
+    'degree_C': '°C',
+    'mbar': 'mbar',	
+    'inch': 'in',
+    'cm': 'cm',
+    'meter': 'm',
+    'mile': 'mi',
+    'mile_per_hour': 'mph',
+    'mile_per_hour2': 'mph',
+    'cm_per_hour': 'cm/h',
+    'cm_per_hour2': 'cm/h',   
+    'km_per_hour': 'km/h',
+    'km_per_hour2': 'km/h',
+    'knot': 'kn',
+    'knot2': 'kn',
+    'meter_per_second': 'm/s',
+    'meter_per_second2': 'm/s',
+    'degree_compass': '°',
+    'watt_per_meter_squared': 'W/m²',
+    'uv_index': 'UV index',
+    'percent': '%',
+    'unix_epoch': None,
+    'volt' : 'V'
+}	
 # return the units label for an observation
 def _get_units_label(obs, unit_system, unit_type=None):
     if unit_type is None:
@@ -266,6 +331,9 @@ class MQTT(weewx.restx.StdRESTbase):
         site_dict.setdefault('retain', False)
         site_dict.setdefault('qos', 0)
         site_dict.setdefault('aggregation', 'individual,aggregate')
+        site_dict.setdefault('ha_discovery', False)
+        site_dict.setdefault('ha_discovery_topic', None)
+        site_dict.setdefault('ha_device_name', None)
 
         usn = site_dict.get('unit_system', None)
         if usn is not None:
@@ -284,6 +352,22 @@ class MQTT(weewx.restx.StdRESTbase):
         site_dict['augment_record'] = to_bool(site_dict.get('augment_record'))
         site_dict['retain'] = to_bool(site_dict.get('retain'))
         site_dict['qos'] = to_int(site_dict.get('qos'))
+        site_dict['ha_discovery'] = to_bool(site_dict.get('ha_discovery'))
+        if site_dict['ha_discovery']:
+            ha_device_name = site_dict.get('ha_device_name', None)
+            if site_dict['ha_discovery_topic'] is None:
+                site_dict['ha_discovery'] = False
+                loginf("ha_discovery is disabled, because discovery_topic is missing")
+            elif ha_device_name is not None:
+                device = dict()
+                device['name'] = site_dict['ha_device_name']
+                device['manufacturer'] = weewx.__name__
+                device['model'] = config_dict['Station']['station_type']
+                device['hw_version'] = "weewx_version:" + weewx.__version__
+                device['sw_version'] = "weewx-mqtt:" + VERSION
+                # remove spaces and special chars in name and substitute with '_'
+                device['identifiers'] = [device['name'].translate ({ord(c): "_" for c in "!@#$%^&*()[]{};:,./<>?\|`~-=+ "})]
+                site_dict['ha_device_name'] = device
         binding = site_dict.pop('binding', 'archive')
         loginf("binding to %s" % binding)
         data_binding = site_dict.pop('data_binding', 'wx_binding')
@@ -317,6 +401,8 @@ class MQTT(weewx.restx.StdRESTbase):
                _obfuscate_password(site_dict['server_url']))
         if 'tls' in site_dict:
             loginf("network encryption/authentication will be attempted")
+        if 'ha_discovery' in site_dict:
+            loginf("ha_discovery is %s" % site_dict['ha_discovery'])          
 
     def new_archive_record(self, event):
         self.archive_queue.put(event.record)
@@ -385,6 +471,7 @@ class MQTTThread(weewx.restx.RESTThread):
     def __init__(self, queue, server_url,
                  client_id='', topic='', unit_system=None, skip_upload=False,
                  augment_record=True, retain=False, aggregation='individual',
+                 ha_discovery=False, ha_device_name=None, ha_discovery_topic=None,
                  inputs={}, obs_to_upload='all', append_units_label=True,
                  manager_dict=None, tls=None, qos=0,
                  post_interval=None, stale=None,
@@ -431,6 +518,9 @@ class MQTTThread(weewx.restx.RESTThread):
         self.skip_upload = skip_upload
         self.mc = None
         self.mc_try_time = 0
+        self.ha_discovery = ha_discovery
+        self.ha_device_name = ha_device_name
+        self.ha_discovery_topic = ha_discovery_topic
 
     def get_mqtt_client(self):
         if self.mc:
@@ -508,6 +598,43 @@ class MQTTThread(weewx.restx.RESTThread):
             data['position'] = ','.join(parts)
         return data
 
+    def filter_sensor_info(self, data, unit_system):
+        # Use sensor type and units from HomeAssistant documentation
+        sensor = dict()
+        for f in data:
+            overrides = self.inputs.get(f.partition("_")[0], {})
+            unit_type = overrides.get('unit')
+            if unit_type is None:
+                (unit_type, _) = weewx.units.getStandardUnitType(unit_system, f.partition("_")[0])
+            sensor[f] = dict()
+            sensor[f]['type'] = HA_SENSOR_TYPE.get(unit_type, unit_type)
+            sensor[f]['unit'] = HA_SENSOR_UNIT.get(unit_type, unit_type)
+        return sensor
+	
+    def ha_discovery_send(self, data, sensor):
+        for key in data:
+            conf = dict()
+            tpc = self.ha_discovery_topic + key + '/config'
+            conf['name']= key
+            conf['unique_id']= self.ha_device_name['identifiers'][0] + '_' + key
+            if sensor[key]['type'] is not None:
+                conf['device_class']= sensor[key]['type']
+            if sensor[key]['unit'] is not None:
+                conf['unit_of_measurement']=sensor[key]['unit']
+            conf['state_topic'] = self.topic + '/' + key
+            if sensor[key]['type'] == 'timestamp':
+                conf['value_template'] = "{{ value | int | as_datetime }}"
+            else:
+                conf['value_template'] = "{{ value | float | round(1) }}"
+            if self.ha_device_name is not None:
+                conf['device'] = self.ha_device_name              
+            (res, mid) = self.mc.publish(tpc, json.dumps(conf),
+            # to avoid losing configuration on restart in HA retain = true
+		                        retain=True, qos=self.qos)
+            if res != mqtt.MQTT_ERR_SUCCESS:
+                logerr("publish failed for %s: %s" %
+                        (tpc, mqtt.error_string(res)))
+	
     def process_record(self, record, dbm):
         if self.augment_record and dbm is not None:
             record = self.get_record(record, dbm)
@@ -537,3 +664,6 @@ class MQTTThread(weewx.restx.RESTThread):
                 if res != mqtt.MQTT_ERR_SUCCESS:
                     logerr("publish failed for %s: %s" %
                            (tpc, mqtt.error_string(res)))
+        if self.ha_discovery:
+            sensor = self.filter_sensor_info(data, record['usUnits'])
+            self.ha_discovery_send(data, sensor)
