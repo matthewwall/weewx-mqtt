@@ -530,7 +530,8 @@ class MQTTThread(weewx.restx.RESTThread):
 
     def get_mqtt_client(self):
         if self.mc:
-            self.mc.publish(self.topic + '/availability', payload='online', retain=True)
+            if self.ha_discovery:
+                self.mc.publish(self.topic + '/availability', payload='online', retain=True)
             return
         if time.time() - self.mc_try_time < self.retry_wait:
             return
@@ -539,7 +540,8 @@ class MQTTThread(weewx.restx.RESTThread):
             pad = "%032x" % random.getrandbits(128)
             client_id = 'weewx_%s' % pad[:8]
         mc = mqtt.Client(client_id=client_id)
-        mc.will_set(self.topic + '/availability', payload='offline', retain=True)
+        if self.ha_discovery:
+            mc.will_set(self.topic + '/availability', payload='offline', retain=True)
         url = urlparse(self.server_url)
         if url.username is not None and url.password is not None:
             mc.username_pw_set(url.username, url.password)
@@ -554,7 +556,8 @@ class MQTTThread(weewx.restx.RESTThread):
                     (_obfuscate_password(self.server_url), str(e)))
             self.mc = None
             return
-        mc.publish(self.topic + '/availability', payload='online', retain=True)
+        if self.ha_discovery:
+            mc.publish(self.topic + '/availability', payload='online', retain=True)
         mc.loop_start()
         loginf('client established for %s' %
                _obfuscate_password(self.server_url))
