@@ -215,7 +215,10 @@ HA_SENSOR_TYPE = {
     'inch': 'distance',
     'cm': 'distance',
     'meter': 'distance',
+    'km': 'distance',
     'mile': 'distance',
+    'minute': 'duration',
+    'hour': 'duration',
     'mile_per_hour': 'speed',
     'mile_per_hour2': 'speed',
     'cm_per_hour': 'speed',
@@ -241,7 +244,10 @@ HA_SENSOR_UNIT = {
     'inch': 'in',
     'cm': 'cm',
     'meter': 'm',
+    'km': 'km',
     'mile': 'mi',
+    'minute': 'min',
+    'hour': 'h',
     'mile_per_hour': 'mph',
     'mile_per_hour2': 'mph',
     'cm_per_hour': 'cm/h',
@@ -615,6 +621,16 @@ class MQTTThread(weewx.restx.RESTThread):
         return sensor
 	
     def ha_discovery_send(self, data, sensor, topic_mode):
+        if self.ha_device_name is not None:
+            device_tracker = dict()
+            device_tracker['name']= self.ha_device_name['name']
+            device_tracker['unique_id']= self.ha_device_name['identifiers'][0] + "_tracker"
+            device_tracker['state_topic']= self.topic + '/availability'
+            device_tracker['availability_topic']= self.topic + '/availability'
+            device_tracker['device'] = self.ha_device_name
+            tpc = self.ha_discovery_topic.replace("sensor", "device_tracker") + 'config'
+            (res, mid) = self.mc.publish(tpc,  json.dumps(device_tracker),
+                                     retain=True, qos=self.qos)
         for key in data:
             conf = dict()
             tpc = self.ha_discovery_topic + key + '/config'
@@ -636,9 +652,9 @@ class MQTTThread(weewx.restx.RESTThread):
                     conf['value_template'] = "{{ value | int | as_datetime }}"
                 else:
                     conf['value_template'] = "{{ value | float | round(1) }}"
-
+            conf['availability_topic'] = self.topic + '/availability' 
             if self.ha_device_name is not None:
-                conf['device'] = self.ha_device_name              
+                conf['device'] = self.ha_device_name
             (res, mid) = self.mc.publish(tpc, json.dumps(conf),
             # to avoid losing configuration on restart in HA retain = true
 		                        retain=True, qos=self.qos)
