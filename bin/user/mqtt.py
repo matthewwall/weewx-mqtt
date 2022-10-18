@@ -611,7 +611,7 @@ class MQTTThread(weewx.restx.RESTThread):
             sensor[f]['unit'] = HA_SENSOR_UNIT.get(unit_type, unit_type)
         return sensor
 	
-    def ha_discovery_send(self, data, sensor):
+    def ha_discovery_send(self, data, sensor, topic_mode):
         for key in data:
             conf = dict()
             tpc = self.ha_discovery_topic + key + '/config'
@@ -621,11 +621,19 @@ class MQTTThread(weewx.restx.RESTThread):
                 conf['device_class']= sensor[key]['type']
             if sensor[key]['unit'] is not None:
                 conf['unit_of_measurement']=sensor[key]['unit']
-            conf['state_topic'] = self.topic + '/' + key
-            if sensor[key]['type'] == 'timestamp':
-                conf['value_template'] = "{{ value | int | as_datetime }}"
-            else:
-                conf['value_template'] = "{{ value | float | round(1) }}"
+            if topic_mode == 'aggregate':
+                conf['state_topic'] = self.topic + '/loop'
+                if sensor[key]['type'] == 'timestamp':
+                    conf['value_template'] = "{{ value_json." + key + " | int | as_datetime }}"
+                else:
+                    conf['value_template'] = "{{ value_json." + key + "  | float | round(1) }}"
+            elif topic_mode == 'individual':
+                conf['state_topic'] = self.topic + '/' + key
+                if sensor[key]['type'] == 'timestamp':
+                    conf['value_template'] = "{{ value | int | as_datetime }}"
+                else:
+                    conf['value_template'] = "{{ value | float | round(1) }}"
+
             if self.ha_device_name is not None:
                 conf['device'] = self.ha_device_name              
             (res, mid) = self.mc.publish(tpc, json.dumps(conf),
@@ -665,5 +673,12 @@ class MQTTThread(weewx.restx.RESTThread):
                     logerr("publish failed for %s: %s" %
                            (tpc, mqtt.error_string(res)))
         if self.ha_discovery:
-            sensor = self.filter_sensor_info(data, record['usUnits'])
-            self.ha_discovery_send(data, sensor)
+            if self.aggregation.find('aggregate') >= 0:
+                topic_mode = 'aggregate'
+            elif self.aggregation.find('individual') >= 0:
+                topic_mode = 'individual'
+            else:
+                topic_mode = None
+            if topic_mode is not None:
+                sensor = self.filter_sensor_info(data, record['usUnits'])
+                self.ha_discovery_send(data, sensor, topic_mode)
