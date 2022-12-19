@@ -53,6 +53,13 @@ either will be accepted.
             [[[[windSpeed]]]]
                 unit = knot  # convert the wind speed to knots
 
+To change the data binding:
+
+[StdRestful]
+    [[MQTT]]
+        ...
+        data_binding = wx_binding # or any other valid data binding
+
 Use TLS to encrypt connection to broker.  The TLS options will be passed to
 Paho client tls_set method.  Refer to Paho client documentation for details:
 
@@ -101,6 +108,7 @@ except ImportError:
 
 import paho.mqtt.client as mqtt
 import random
+import socket
 import sys
 import time
 
@@ -278,6 +286,8 @@ class MQTT(weewx.restx.StdRESTbase):
         site_dict['qos'] = to_int(site_dict.get('qos'))
         binding = site_dict.pop('binding', 'archive')
         loginf("binding to %s" % binding)
+        data_binding = site_dict.pop('data_binding', 'wx_binding')
+        loginf("data_binding is %s" % data_binding)
 
         # if we are supposed to augment the record with data from weather
         # tables, then get the manager dict to do it.  there may be no weather
@@ -285,7 +295,7 @@ class MQTT(weewx.restx.StdRESTbase):
         try:
             if site_dict.get('augment_record'):
                 _manager_dict = weewx.manager.get_manager_dict_from_config(
-                    config_dict, 'wx_binding')
+                    config_dict, data_binding)
                 site_dict['manager_dict'] = _manager_dict
         except weewx.UnknownBinding:
             pass
@@ -419,6 +429,37 @@ class MQTTThread(weewx.restx.RESTThread):
         self.aggregation = aggregation
         self.templates = dict()
         self.skip_upload = skip_upload
+        self.mc = None
+        self.mc_try_time = 0
+
+    def get_mqtt_client(self):
+        if self.mc:
+            return
+        if time.time() - self.mc_try_time < self.retry_wait:
+            return
+        client_id = self.client_id
+        if not client_id:
+            pad = "%032x" % random.getrandbits(128)
+            client_id = 'weewx_%s' % pad[:8]
+        mc = mqtt.Client(client_id=client_id)
+        url = urlparse(self.server_url)
+        if url.username is not None and url.password is not None:
+            mc.username_pw_set(url.username, url.password)
+        # if we have TLS opts configure TLS on our broker connection
+        if len(self.tls_dict) > 0:
+            mc.tls_set(**self.tls_dict)
+        try:
+            self.mc_try_time = time.time()
+            mc.connect(url.hostname, url.port)
+        except (socket.error, socket.timeout, socket.herror) as e:
+            logerr('Failed to connect to MQTT server (%s): %s' %
+                    (_obfuscate_password(self.server_url), str(e)))
+            self.mc = None
+            return
+        mc.loop_start()
+        loginf('client established for %s' %
+               _obfuscate_password(self.server_url))
+        self.mc = mc
 
     def filter_data(self, record):
         # if uploading everything, we must check the upload variables list
@@ -468,7 +509,6 @@ class MQTTThread(weewx.restx.RESTThread):
         return data
 
     def process_record(self, record, dbm):
-        import socket
         if self.augment_record and dbm is not None:
             record = self.get_record(record, dbm)
         if self.unit_system is not None:
@@ -479,40 +519,21 @@ class MQTTThread(weewx.restx.RESTThread):
         if self.skip_upload:
             loginf("skipping upload")
             return
-        url = urlparse(self.server_url)
-        for _count in range(self.max_tries):
-            try:
-                client_id = self.client_id
-                if not client_id:
-                    pad = "%032x" % random.getrandbits(128)
-                    client_id = 'weewx_%s' % pad[:8]
-                mc = mqtt.Client(client_id=client_id)
-                if url.username is not None and url.password is not None:
-                    mc.username_pw_set(url.username, url.password)
-                # if we have TLS opts configure TLS on our broker connection
-                if len(self.tls_dict) > 0:
-                    mc.tls_set(**self.tls_dict)
-                mc.connect(url.hostname, url.port)
-                mc.loop_start()
-                if self.aggregation.find('aggregate') >= 0:
-                    tpc = self.topic + '/loop'
-                    (res, mid) = mc.publish(tpc, json.dumps(data),
-                                            retain=self.retain, qos=self.qos)
-                    if res != mqtt.MQTT_ERR_SUCCESS:
-                        logerr("publish failed for %s: %s" % (tpc, res))
-                if self.aggregation.find('individual') >= 0:
-                    for key in data:
-                        tpc = self.topic + '/' + key
-                        (res, mid) = mc.publish(tpc, data[key],
-                                                retain=self.retain)
-                        if res != mqtt.MQTT_ERR_SUCCESS:
-                            logerr("publish failed for %s: %s" % (tpc, res))
-                mc.loop_stop()
-                mc.disconnect()
-                return
-            except (socket.error, socket.timeout, socket.herror) as e:
-                logdbg("Failed upload attempt %d: %s" % (_count+1, e))
-            time.sleep(self.retry_wait)
-        else:
-            raise weewx.restx.FailedPost("Failed upload after %d tries" %
-                                         (self.max_tries,))
+        self.get_mqtt_client()
+        if not self.mc:
+            raise weewx.restx.FailedPost('MQTT client not available')
+        if self.aggregation.find('aggregate') >= 0:
+            tpc = self.topic + '/loop'
+            (res, mid) = self.mc.publish(tpc, json.dumps(data),
+                                         retain=self.retain, qos=self.qos)
+            if res != mqtt.MQTT_ERR_SUCCESS:
+                logerr("publish failed for %s: %s" %
+                       (tpc, mqtt.error_string(res)))
+        if self.aggregation.find('individual') >= 0:
+            for key in data:
+                tpc = self.topic + '/' + key
+                (res, mid) = self.mc.publish(tpc, data[key],
+                                             retain=self.retain)
+                if res != mqtt.MQTT_ERR_SUCCESS:
+                    logerr("publish failed for %s: %s" %
+                           (tpc, mqtt.error_string(res)))
