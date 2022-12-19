@@ -19,6 +19,7 @@ class MQTTInstaller(ExtensionInstaller):
             config={
                 'StdRESTful': {
                     'MQTT': {
+                        'enable': 'false',
                         'server_url': 'INSERT_SERVER_URL_HERE'}}},
             files=[('bin/user', ['bin/user/mqtt.py'])]
             )
