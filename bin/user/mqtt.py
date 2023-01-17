@@ -606,7 +606,12 @@ class MQTTThread(weewx.restx.RESTThread):
             #       in _datadict, as _datadict can be a LOOP packet
             #       that does not contain all the observation
             #       types. 
-            if tag[1] in _datadict:
+            if (
+              tag[2]!='series' and (
+                tag[1] in _datadict or
+                (tag[1]=='wind' and 
+                  'windSpeed' in _datadict and 'windDir' in _datadict)
+              )):
                 # get timespan
                 # (There is no need for error handling regarding  the 
                 # presence of tag[0] in PERIODS here, as this is already
