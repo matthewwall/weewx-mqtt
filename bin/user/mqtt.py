@@ -606,12 +606,7 @@ class MQTTThread(weewx.restx.RESTThread):
             #       in _datadict, as _datadict can be a LOOP packet
             #       that does not contain all the observation
             #       types. 
-            if (
-              tag[2]!='series' and (
-                tag[1] in _datadict or
-                (tag[1]=='wind' and 
-                  'windSpeed' in _datadict and 'windDir' in _datadict)
-              )):
+            if tag[2]!='series' and self.aug_has_data(tag[1],tag[2],_datadict):
                 # get timespan
                 # (There is no need for error handling regarding  the 
                 # presence of tag[0] in PERIODS here, as this is already
@@ -628,3 +623,11 @@ class MQTTThread(weewx.restx.RESTThread):
                     logerr('%s = %s: error %s' % (agg_obs,tag,e))
         
         return _datadict
+
+    def aug_has_data(self, obs_type, agg_type, datadict):
+        if obs_type=='wind': 
+            if agg_type=='max':
+                return 'windGust' in datadict and 'windGustDir' in datadict
+            else:
+                return 'windSpeed' in datadict and 'windDir' in datadict
+        return obs_type in datadict
