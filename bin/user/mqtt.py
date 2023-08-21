@@ -631,7 +631,6 @@ class MQTTThread(weewx.restx.RESTThread):
     def ha_discovery_send(self, data, sensor, topic_mode):
         if self.ha_device_name is not None:
             device_tracker = dict()
-            device_tracker['name']= self.ha_device_name['name']
             device_tracker['unique_id']= self.ha_device_name['identifiers'][0] + "_tracker"
             device_tracker['state_topic']= self.topic + '/availability'
             device_tracker['availability_topic']= self.topic + '/availability'
