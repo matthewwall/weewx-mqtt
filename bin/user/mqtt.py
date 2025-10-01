@@ -1,99 +1,7 @@
-# Copyright 2013-2022 Matthew Wall
+# Copyright 2013-2025 Matthew Wall
 # Distributed under the terms of the GNU Public License (GPLv3)
 """
-Upload data to MQTT server
-
-This service requires the python bindings for mqtt:
-
-   pip install paho-mqtt
-
-Minimal configuration:
-
-[StdRestful]
-    [[MQTT]]
-        server_url = mqtt://username:password@localhost:1883/
-        topic = weather
-        unit_system = METRIC
-
-Other MQTT options can be specified:
-
-[StdRestful]
-    [[MQTT]]
-        ...
-        qos = 1        # options are 0, 1, 2
-        retain = true  # options are true or false
-
-The observations can be sent individually, or in an aggregated packet:
-
-[StdRestful]
-    [[MQTT]]
-        ...
-        aggregation = individual, aggregate # individual, aggregate, or both
-
-Bind to loop packets or archive records:
-
-[StdRestful]
-    [[MQTT]]
-        ...
-        binding = loop # options are loop or archive
-
-Use the inputs map to customize name, format, or unit for any observation.
-Note that starting with v0.24, option 'units' was renamed to 'unit', although
-either will be accepted.
-
-[StdRestful]
-    [[MQTT]]
-        ...
-        unit_system = METRIC # default to metric
-        [[[inputs]]]
-            [[[[outTemp]]]]
-                name = inside_temperature  # use a label other than outTemp
-                format = %.2f              # two decimal places of precision
-                unit = degree_F            # convert outTemp to F, others in C
-            [[[[windSpeed]]]]
-                unit = knot  # convert the wind speed to knots
-
-To change the data binding:
-
-[StdRestful]
-    [[MQTT]]
-        ...
-        data_binding = wx_binding # or any other valid data binding
-
-Use TLS to encrypt connection to broker.  The TLS options will be passed to
-Paho client tls_set method.  Refer to Paho client documentation for details:
-
-  https://eclipse.org/paho/clients/python/docs/
-
-[StdRestful]
-    [[MQTT]]
-        ...
-        [[[tls]]]
-            # CA certificates file (mandatory)
-            ca_certs = /etc/ssl/certs/ca-certificates.crt
-            # PEM encoded client certificate file (optional)
-            certfile = /home/user/.ssh/id.crt
-            # private key file (optional)
-            keyfile = /home/user/.ssh/id.key
-            # Certificate requirements imposed on the broker (optional).
-            #   Options are 'none', 'optional' or 'required'.
-            #   Default is 'required'.
-            cert_reqs = required
-            # SSL/TLS protocol (optional).
-            #   Options include sslv2, sslv23, sslv3, tls, tlsv1, tlsv11,
-            #   tlsv12.
-            #   Default is 'tlsv12'
-            #   Not all options are supported by all systems.
-            #   OpenSSL version till 1.0.0.h supports sslv2, sslv3 and tlsv1
-            #   OpenSSL >= 1.0.1 supports tlsv11 and tlsv12
-            #   OpenSSL >= 1.1.1 support TLSv1.3 (use tls_version = tls)
-            #   Check your OpenSSL protocol support with:
-            #   openssl s_client -help 2>&1  > /dev/null | egrep "\-(ssl|tls)[^a-z]"
-            tls_version = tlsv12
-            # Allowable encryption ciphers (optional).
-            #   To specify multiple cyphers, delimit with commas and enclose
-            #   in quotes.
-            #ciphers =
+Upload data to MQTT server.
 """
 
 try:
@@ -127,7 +35,7 @@ import weewx.restx
 import weewx.units
 from weeutil.weeutil import to_int, to_bool, accumulateLeaves
 
-VERSION = "0.24"
+VERSION = "0.25"
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -179,6 +87,7 @@ UNIT_REDUCTIONS = {
     'degree_F': 'F',
     'degree_C': 'C',
     'inch': 'in',
+    'foot': 'ft',
     'mile_per_hour': 'mph',
     'mile_per_hour2': 'mph',
     'km_per_hour': 'kph',
@@ -187,6 +96,11 @@ UNIT_REDUCTIONS = {
     'knot2': 'knot2',
     'meter_per_second': 'mps',
     'meter_per_second2': 'mps',
+    'centibar': 'cb',
+    'gallon': 'gal',
+    'watt_hour': 'Wh',
+    'watt_second': 'Ws',
+    'degree_angle': 'degree',
     'degree_compass': None,
     'watt_per_meter_squared': 'Wpm2',
     'uv_index': None,
@@ -235,6 +149,11 @@ class MQTT(weewx.restx.StdRESTbase):
         append_units_label: should units label be appended to name
         Default is True
 
+        discover_topic: if specified, post messages to the this topic that
+        describe the data that will be posted. This is useful for automatic
+        mapping of variables for MQTT subscribers such as home assistant.
+        Default is None
+
         obs_to_upload: Which observations to upload.  Possible values are
         none or all.  When none is specified, only items in the inputs list
         will be uploaded.  When all is specified, all observations will be
@@ -266,6 +185,7 @@ class MQTT(weewx.restx.StdRESTbase):
         site_dict.setdefault('retain', False)
         site_dict.setdefault('qos', 0)
         site_dict.setdefault('aggregation', 'individual,aggregate')
+        site_dict.setdefault('discover_topic', None)
 
         usn = site_dict.get('unit_system', None)
         if usn is not None:
@@ -386,11 +306,11 @@ class MQTTThread(weewx.restx.RESTThread):
                  client_id='', topic='', unit_system=None, skip_upload=False,
                  augment_record=True, retain=False, aggregation='individual',
                  inputs={}, obs_to_upload='all', append_units_label=True,
+                 discover_topic=None,
                  manager_dict=None, tls=None, qos=0,
-                 post_interval=None, stale=None,
+                 post_interval=None, max_backlog=sys.maxsize, stale=None,
                  log_success=True, log_failure=True,
-                 timeout=60, max_tries=3, retry_wait=5,
-                 max_backlog=sys.maxsize):
+                 max_tries=3, timeout=60, retry_wait=5):
         super(MQTTThread, self).__init__(queue,
                                          protocol_name='MQTT',
                                          manager_dict=manager_dict,
@@ -427,6 +347,8 @@ class MQTTThread(weewx.restx.RESTThread):
         self.retain = retain
         self.qos = qos
         self.aggregation = aggregation
+        self.discover_topic = discover_topic
+        self.discover_dict = dict()
         self.templates = dict()
         self.skip_upload = skip_upload
         self.mc = None
@@ -498,6 +420,7 @@ class MQTTThread(weewx.restx.RESTThread):
                 data[name] = s
             except (TypeError, ValueError):
                 pass
+        # handle location data latitude/longitude
         # FIXME: generalize this
         if 'latitude' in data and 'longitude' in data:
             parts = [str(data['latitude']), str(data['longitude'])]
@@ -507,6 +430,81 @@ class MQTTThread(weewx.restx.RESTThread):
                 parts.append(str(data['altitude_foot']))
             data['position'] = ','.join(parts)
         return data
+
+    discover_info = {
+        'model': xx,
+        'manufacturer': mf,
+        'outTemp': {
+            'model': yy,
+            'manufacturer': yy,
+            'device_class': 'temperature', # default: from unit_group
+            'state_class': 'measurement', # default: measurement
+            'state_topic': topic/outTemp, # default: topic/outTemp
+            'unit': 'C', # default: from unit_group
+        },
+        'inTemp': {
+        },
+        'rain': {
+            'device_class': 'total_increasing',
+        },
+        'rainRate': {
+        },
+    }
+
+    def publish_discover_info(self, topic, record):
+        # publish discovery info about each field in the record.  keep track of
+        # each field we publish so that we only do it once per field.  we use
+        # the topic format defined by home assistant:
+        #
+        #   <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
+        #
+        # component must be one of the MQTT integrations:
+        #  binary_sensor
+        #  device
+        #
+        # we skip the node_id since we define object_id
+        #
+        # a component-only message looks like this:
+        #
+        # homeassistant/sensor/outTemp/config
+        # {
+        #   "device": {
+        #     "ids": [""], # the device identifier
+        #     "mdl": "Vantage Pro 2",
+        #     "mf": "Davis",
+        #     "name": "WeeWX",
+        #     "sw_version": "WEEWX_VERSION",
+        #   },
+        #   "name": "Outside Temperature",
+        #   "device_class": "temperature", # e.g., volume, power, energy
+        #   "state_class": "measurement", # total_increasing
+        #   "state_topic": "weather/outTemp",
+        #   "unique_id": "outTemp", # same as object_id
+        #   "unit_of_measurement": "C",
+        # }
+
+        for field in record:
+            if field not in self.discover_dict:
+                object_id = field
+                tpc = topic + '/sensor/' + object_id + '/config'
+                cfg = {
+                    'device': {
+                        'ids': [object_id],
+                        'mdl': MODEL,
+                        'mf': MANUFACTURER,
+                        'name': 'WeeWX',
+                        'sw_version': weewx.__version__,
+                    },
+                    'name': object_id,
+                    'device_class': get_device_class(object_id),
+                    'state_class': get_state_class(object_id),
+                    'state_topic': get_state_topic(object_id),
+                    'unique_id': object_id,
+                    'unit_of_measurement': get_unit(object_id),
+                }
+                msg = json.dumps(cfg)
+                self._publish(tpc, msg, retain=True)
+                self.discover_dict[field] = True
 
     def process_record(self, record, dbm):
         if self.augment_record and dbm is not None:
@@ -522,18 +520,17 @@ class MQTTThread(weewx.restx.RESTThread):
         self.get_mqtt_client()
         if not self.mc:
             raise weewx.restx.FailedPost('MQTT client not available')
+        if self.discover_topic:
+            self.publish_discover_info(discover_topic, data)
         if self.aggregation.find('aggregate') >= 0:
             tpc = self.topic + '/loop'
-            (res, mid) = self.mc.publish(tpc, json.dumps(data),
-                                         retain=self.retain, qos=self.qos)
-            if res != mqtt.MQTT_ERR_SUCCESS:
-                logerr("publish failed for %s: %s" %
-                       (tpc, mqtt.error_string(res)))
+            self._publish(tpc, json.dumps(data), self.retain, self.qos)
         if self.aggregation.find('individual') >= 0:
             for key in data:
                 tpc = self.topic + '/' + key
-                (res, mid) = self.mc.publish(tpc, data[key],
-                                             retain=self.retain)
-                if res != mqtt.MQTT_ERR_SUCCESS:
-                    logerr("publish failed for %s: %s" %
-                           (tpc, mqtt.error_string(res)))
+                self._publish(tpc, data[key], self.retain)
+
+    def _publish(self, tpc, data, retain=False, qos=0):
+        (res, mid) = self.mc.publish(tpc, data, retain=retain)
+        if res != mqtt.MQTT_ERR_SUCCESS:
+            logerr("publish failed for %s: %s" % (tpc, mqtt.error_string(res)))
