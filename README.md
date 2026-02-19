@@ -22,6 +22,7 @@ wget -O weewx-mqtt.zip https://github.com/matthewwall/weewx-mqtt/archive/master.
 
 NOTE: the current version of paho-mqtt is not compatible with v0.24 of this extension. Until this extension is updated, force install a previous version of paho-mqtt.
 ```
+# For a system with only python3:
 sudo pip install paho-mqtt==1.6.1
 sudo pip install python-cjson
 ```
