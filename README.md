@@ -96,56 +96,57 @@ This is how to specify the options in the MQTT extension configuration:
 ```
 [StdRESTful]
     [[MQTT]]
-            ...
-                    [[[tls]]]
-                                # CA certificates file (mandatory)
-                                            ca_certs = /etc/ssl/certs/ca-certificates.crt
-                                                        # PEM encoded client certificate file (optional)
-                                                                    certfile = /home/user/.ssh/id.crt
-                                                                                # private key file (optional)
-                                                                                            keyfile = /home/user/.ssh/id.key
-                                                                                                        # Certificate requirements imposed on the broker (optional).
-                                                                                                                    #   Options are 'none', 'optional' or 'required'.
-                                                                                                                                #   Default is 'required'.
-                                                                                                                                            cert_reqs = required
-                                                                                                                                                        # SSL/TLS protocol (optional).
-                                                                                                                                                                    #   Options include sslv1, sslv2, sslv23, tls, tlsv1, tlsv12
-                                                                                                                                                                                #   Default is 'tlsv1'
-                                                                                                                                                                                            #   Not all options are supported by all systems.
-                                                                                                                                                                                                        tls_version = tlsv1
-                                                                                                                                                                                                                    # Allowable encryption ciphers (optional).
-                                                                                                                                                                                                                                #   To specify multiple cyphers, delimit with commas and enclose
-                                                                                                                                                                                                                                            #   in quotes.
-                                                                                                                                                                                                                                                        #ciphers =
-                                                                                                                                                                                                                                                        ```
-
+    ...
+        [[[tls]]]
+            # CA certificates file (mandatory)
+            ca_certs = /etc/ssl/certs/ca-certificates.crt
+            # PEM encoded client certificate file (optional)
+            certfile = /home/user/.ssh/id.crt
+            # private key file (optional)
+            keyfile = /home/user/.ssh/id.key
+            # Certificate requirements imposed on the broker (optional).
+            #   Options are 'none', 'optional' or 'required'.
+            #   Default is 'required'.
+            cert_reqs = required
+            # SSL/TLS protocol (optional).
+            #   Options include sslv1, sslv2, sslv23, tls, tlsv1, tlsv12
+            #   Default is 'tlsv1'
+            #   Not all options are supported by all systems.
+            tls_version = tlsv1
+            # Allowable encryption ciphers (optional).
+            #   To specify multiple cyphers, delimit with commas and enclose
+            #   in quotes.
+            #ciphers =
+```
 
 ### Examples
 
-This configuration will use the METRIC unit system for all observations, whether the database is METRIC, METRICWX, or US:
+This configuration will use the METRIC unit system for all observations,
+whether the database is METRIC, METRICWX, or US:
 
 ```
 [StdRESTful]
     [[MQTT]]
-            unit_system = METRIC
-            ```
+        unit_system = METRIC
+```
 
-This configuration will specialize the units of outTemp and the units, format, and name of inTemp:
+This configuration will specialize the units of outTemp and the units, format,
+and name of inTemp:
 
 ```
 [StdRESTful]
     [[MQTT]]
-            unit_system = METRICWX
-                    [[[inputs]]]
-                                [[[[outTemp]]]]
-                                                units = degree_F             # use F instead of C
-                                                            [[[[inTemp]]]]
-                                                                            units = degree_F             # use F instead of C
-                                                                                            format = %.2f                # use two decimal places of precision
-                                                                                                            name = inside_temperature    # use label other than inTemp
-                                                                                                                        [[[[windSpeed]]]]
-                                                                                                                                        units = knot                 # use knots instead of meter_per_second
-                                                                                                                                        ```
+        unit_system = METRICWX
+        [[[inputs]]]
+            [[[[outTemp]]]]
+                units = degree_F             # use F instead of C
+            [[[[inTemp]]]]
+                units = degree_F             # use F instead of C
+                format = %.2f                # use two decimal places of precision
+                name = inside_temperature    # use label other than inTemp
+            [[[[windSpeed]]]]
+                units = knot                 # use knots instead of meter_per_second
+```
 
 The observation `outTemp` will be converted to degrees F and published to a topic formed from the configured topic and  `outTemp_F`.  The observation `inTemp` will be converted to degrees F and uploaded as `inside_temperature` with 2 decimal places of precision.  Since the `unit_system` is `METRICWX`, other temperatures (if they exist) will use degrees C.  For example `extraTemp1` will be published as `extraTemp1_C`.  The observation `windSpeed` will be converted to knots and published as `windSpeed_knot`.
 
