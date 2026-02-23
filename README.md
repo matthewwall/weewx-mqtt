@@ -166,7 +166,7 @@ weather/#
 
 This will list all observations.
 
-For example, if the uploader is configured to send individual observations you should see something like this:
+For example, if the uploader is configured to send individual observations you should see something like this (_Please note that this list may vary depending on your settings_):
 
 ```
 weather/loop
@@ -204,7 +204,6 @@ weather/windDir
 weather/inHumidity
 weather/radiation_Wpm2
 ```
-_Please note that this list may vary depending on your settings_
 
 ### Source repository
 https://github.com/matthewwall/weewx-mqtt
