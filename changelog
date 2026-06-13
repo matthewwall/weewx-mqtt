@@ -1,3 +1,22 @@
+0.25 13jun2026
+* added Home Assistant MQTT discovery (new [[[ha_discovery]]] section).
+  Discovery is published once, retained, before the first data packet, and can
+  also be (re)published on demand with 'weectl rest run MQTT --discovery'.
+  Discovery describes the data as published: set 'unit_system = METRICWX' to
+  announce metric/SI units to HA, or leave it unset to announce native units.
+  Use 'skip_fields' to omit observations from discovery (they are still
+  published as MQTT data; only their discovery message is suppressed).
+  dateTime is announced as a HA 'timestamp' entity named "Observation Time"
+  (its Unix-epoch value is converted to a datetime in the value_template).
+  Device name/model/manufacturer are coerced to strings, so a comma-containing
+  station location (parsed by ConfigObj as a list) no longer makes HA reject
+  the discovery message.
+  A device_class is dropped when the published unit is not one HA accepts for
+  it (e.g. rainRate in cm/h under unit_system=METRIC), keeping the correct unit
+  instead of letting HA reject the entity.
+* fixed: a comma-separated 'aggregation' value (parsed as a list) crashed
+  process_record; it is now normalized to a string.
+
 0.24 16apr2022
 * renamed option 'units' to 'unit', although either will be accepted.
 

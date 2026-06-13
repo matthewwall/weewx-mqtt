@@ -86,6 +86,75 @@ For publishing aggregate data, the topic is TOPIC/loop, and the content is a jso
 Note that the choice of topic names (including unit suffixes) and units used in the contents forms a protocol and the configuration of this extension and of other programs that consume this data must match.
 
 
+### Home Assistant discovery
+
+This extension can announce its observations to [Home Assistant](https://www.home-assistant.io/)
+using [MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery),
+so the sensors appear automatically without any manual entity configuration.
+
+```
+[StdRESTful]
+    [[MQTT]]
+        ...
+        # To send metric/SI units to Home Assistant, convert the published data
+        # with the standard unit_system option (US, METRIC, or METRICWX). If this
+        # is not set, the station's native units are published and announced.
+        unit_system = METRICWX
+        [[[ha_discovery]]]
+            # Turn on Home Assistant discovery
+            enable = true
+            # Topic prefix Home Assistant listens on (default: homeassistant)
+            discovery_prefix = homeassistant
+            # Identifier for this station's node/device (default: weewx)
+            node_id = weewx
+            # Prefix for the entities' unique ids (default: weewx)
+            unique_id_prefix = weewx
+            # Observations to leave OUT of Home Assistant discovery, comma-
+            # separated. NOTE: this only suppresses the discovery message for
+            # these fields -- they are STILL published as normal MQTT data. It
+            # does not stop them from being sent. (usUnits and interval never get
+            # a discovery message.)
+            skip_fields = inTemp, inHumidity
+            [[[[device]]]]
+                # All values optional; sensible defaults are taken from [Station].
+                name = My Weather Station
+                manufacturer = WeeWX
+                model = Vantage Pro2
+                identifiers = weewx
+```
+
+Notes:
+
+* Discovery describes the data **exactly as it is published**, including its
+  units. Whether values are converted is entirely up to you, via the existing
+  `unit_system` option: leave it unset to publish (and announce) the station's
+  native units (e.g. `°F`, `inHg`), or set `unit_system = METRICWX` to publish
+  and announce metric/SI units (`°C`, `hPa`, `mm`, `m/s`). This works for any
+  station regardless of the units it natively reports.
+* **`skip_fields` does not stop a field from being published over MQTT.** It only
+  suppresses the Home Assistant *discovery* message for that field, so no HA
+  entity is auto-created for it. The field's data is still sent on its normal
+  topic / in the aggregate packet exactly as before; you can still subscribe to
+  it or add it to Home Assistant manually. `usUnits` and `interval` never get a
+  discovery message.
+* `dateTime` (the time of the observation) is published as a Home Assistant
+  `timestamp` entity named **Observation Time** (`weewx_observation_time`). Its
+  Unix-epoch value is converted to a datetime in the discovery `value_template`.
+* Discovery messages are published **once**, **retained**, just before the first
+  data packet is sent. Because they are retained, Home Assistant will pick them
+  up even if it (re)starts later, and re-sending them on each weewx restart is
+  harmless.
+* You can also (re)publish discovery on demand, without waiting for weewx to send
+  a packet, using the `weectl rest` command:
+
+  ```
+  weectl rest run MQTT --discovery
+  ```
+
+  This publishes the discovery messages (using the most recent archive record to
+  determine the available observations) and then exits.
+
+
 ### TLS Options
 
 This extension supports the use of encrypted connections to the broker using TLS.  The TLS options will be passed to Paho client tls_set method.  Refer to Paho client documentation for details:
