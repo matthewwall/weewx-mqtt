@@ -1,41 +1,37 @@
 mqtt - weewx extension that sends data to an MQTT broker
-Copyright 2014-2020 Matthew Wall
+Copyright 2014-2026 Matthew Wall
 Distributed under the terms of the GNU Public License (GPLv3)
 
 ===============================================================================
 Pre-Requisites
 
-Install the MQTT python bindings
+This extension uses the paho-mqtt python module.
 
-For python3:
+For debian systems:
+
+  sudo apt install python3-paho-mqtt
+
+For pip installs:
 
   sudo pip3 install paho-mqtt
 
-For python2:
-
-  sudo pip install paho-mqtt
 
 ===============================================================================
 Installation instructions:
 
-1) download
+1) install the driver
 
-wget -O weewx-mqtt.zip https://github.com/matthewwall/weewx-mqtt/archive/master.zip
+weectl extension install https://github.com/matthewwall/weewx-mqtt/archive/master.zip
 
-2) run the installer:
-
-wee_extension --install weewx-mqtt.zip
-
-3) modify weewx.conf:
+2) modify weewx.conf to include the MQTT server URL:
 
 [StdRESTful]
     [[MQTT]]
         server_url = mqtt://username:password@example.com:1883
 
-4) restart weewx
+3) restart weewx
 
-sudo /etc/init.d/weewx stop
-sudo /etc/init.d/weewx start
+sudo systemctl restart weewx
 
 
 ===============================================================================
