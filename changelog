@@ -1,3 +1,31 @@
+0.26 16aug2026
+* fixed: once the connection to the broker was lost, the client was never
+  checked or rebuilt, so every subsequent post failed with "The client is not
+  currently connected" until weewx was restarted. The connection is now
+  verified before each post and rebuilt when it has gone.
+* fixed: a failed publish was only logged, never reported, so weewx went on to
+  log a successful post for a record that was never delivered. A record that
+  cannot be delivered is now reported as a failure.
+* fixed: 'max_tries' and 'retry_wait' were accepted but ignored; a post is now
+  retried on a fresh connection, since weewx does not retry for this service.
+* fixed: individual observations were always published at qos 0, ignoring the
+  configured 'qos'.
+* the connection is now established properly: the client waits for the broker
+  to acknowledge it (CONNACK) instead of assuming an opened socket is usable,
+  so a refused connection is reported as itself (e.g. "not authorised")
+  instead of surfacing later as a publish failure.
+* connects and disconnects are logged, so an outage is visible when it happens
+  rather than at the next archive interval.
+* at qos 1 or 2, delivery is confirmed by the broker before a post is
+  considered successful.
+* the default 'qos' is now 1. At qos 0 anything published while the connection
+  is down is silently dropped, losing the record.
+* new options: 'keepalive', 'connect_timeout', 'publish_timeout',
+  'reconnect_min_delay', 'reconnect_max_delay'.
+* supports paho-mqtt 2.x as well as 1.x.
+* Home Assistant discovery is re-announced after a reconnect, in case the
+  broker came back without its retained messages.
+
 0.25 13jun2026
 * added Home Assistant MQTT discovery (new [[[ha_discovery]]] section).
   Discovery is published once, retained, before the first data packet, and can

@@ -23,6 +23,41 @@ Other MQTT options can be specified:
         qos = 1        # options are 0, 1, 2
         retain = true  # options are true or false
 
+Connection robustness.  The connection to the broker is verified before every
+post and rebuilt if it has been lost, and a failed post is retried.  The
+defaults suit an archive binding; if you bind to loop packets, lower the
+timeouts so a broker outage cannot stall the posting thread between packets,
+and set 'max_backlog' to bound the queue.
+
+[StdRestful]
+    [[MQTT]]
+        ...
+        # MQTT keepalive interval, in seconds.  The broker declares the client
+        # dead if it hears nothing for 1.5x this.  Default is 60.
+        keepalive = 60
+        # How long to wait for the broker to acknowledge a connection
+        # (CONNACK), in seconds.  Default is 10.
+        connect_timeout = 10
+        # How long to wait for the broker to confirm delivery of a message, in
+        # seconds.  Only meaningful when qos is 1 or 2; set to 0 to publish
+        # without waiting for confirmation.  Default is 10.
+        publish_timeout = 10
+        # Bounds on the delay between the client's own reconnect attempts, in
+        # seconds.  The delay doubles from min to max.  Defaults are 1 and 120.
+        reconnect_min_delay = 1
+        reconnect_max_delay = 120
+        # How many times to try posting a record, and how long to wait between
+        # attempts, in seconds.  Defaults are 3 and 5.
+        max_tries = 3
+        retry_wait = 5
+
+Note on 'client_id': an MQTT broker permits only one connection per client
+identifier, and disconnects the older connection when a second one presents the
+same id.  If you set 'client_id' explicitly, running 'weectl rest run MQTT' by
+hand will therefore kick the running weewx daemon off the broker.  Leaving
+'client_id' unset (the default) gives each connection a random id and avoids
+this entirely.
+
 The observations can be sent individually, or in an aggregated packet:
 
 [StdRestful]
@@ -111,7 +146,17 @@ import random
 import re
 import socket
 import sys
+import threading
 import time
+
+try:
+    # paho-mqtt 2.0 introduced a callback API version, and the callback
+    # signatures differ between the two versions.  Probe once here so the rest
+    # of the module can work with either.
+    from paho.mqtt.enums import CallbackAPIVersion
+    PAHO2 = True
+except ImportError:
+    PAHO2 = False
 
 try:
     import cjson as json
@@ -126,9 +171,15 @@ except (ImportError, AttributeError):
 import weewx
 import weewx.restx
 import weewx.units
-from weeutil.weeutil import to_int, to_bool, accumulateLeaves
+from weeutil.weeutil import to_int, to_float, to_bool, accumulateLeaves
 
-VERSION = "0.25"
+VERSION = "0.26"
+
+# How long to let the client finish a reconnect of its own before giving up on
+# it and building a new one.  Short on purpose: a client that is genuinely
+# reconnecting recovers well within this, and one that is not is dead and can
+# never publish again, so there is nothing to gain by waiting longer.
+RECONNECT_GRACE = 2.0
 
 if weewx.__version__ < "3":
     raise weewx.UnsupportedFeature("weewx 3 is required, found %s" %
@@ -162,6 +213,19 @@ def _compat(d, old_label, new_label):
     if old_label in d and new_label not in d:
         d.setdefault(new_label, d[old_label])
         d.pop(old_label)
+
+def _rc_string(rc):
+    """Render a paho result code.
+
+    paho 1.x reports plain ints, paho 2.x a ReasonCode object which is not an
+    int and which error_string() renders as "Unknown error." -- unhelpfully
+    hiding, for example, "Session taken over", the broker's way of saying
+    another client connected with the same client_id.
+    """
+    if isinstance(rc, int):
+        return mqtt.error_string(rc)
+    return str(rc)
+
 
 def _obfuscate_password(url):
     parts = urlparse(url)
@@ -388,8 +452,16 @@ class MQTT(weewx.restx.StdRESTbase):
         site_dict.setdefault('augment_record', True)
         site_dict.setdefault('obs_to_upload', 'all')
         site_dict.setdefault('retain', False)
-        site_dict.setdefault('qos', 0)
+        # qos 1 (at least once) is the default: at qos 0 the client silently
+        # drops anything published while the connection is down, so a momentary
+        # outage loses the record outright.
+        site_dict.setdefault('qos', 1)
         site_dict.setdefault('aggregation', 'individual,aggregate')
+        site_dict.setdefault('keepalive', 60)
+        site_dict.setdefault('connect_timeout', 10)
+        site_dict.setdefault('publish_timeout', 10)
+        site_dict.setdefault('reconnect_min_delay', 1)
+        site_dict.setdefault('reconnect_max_delay', 120)
 
         usn = site_dict.get('unit_system', None)
         if usn is not None:
@@ -408,6 +480,10 @@ class MQTT(weewx.restx.StdRESTbase):
         site_dict['augment_record'] = to_bool(site_dict.get('augment_record'))
         site_dict['retain'] = to_bool(site_dict.get('retain'))
         site_dict['qos'] = to_int(site_dict.get('qos'))
+        site_dict['keepalive'] = to_int(site_dict.get('keepalive'))
+        for opt in ('connect_timeout', 'publish_timeout',
+                    'reconnect_min_delay', 'reconnect_max_delay'):
+            site_dict[opt] = to_float(site_dict.get(opt))
         binding = site_dict.pop('binding', 'archive')
         loginf("binding to %s" % binding)
         data_binding = site_dict.pop('data_binding', 'wx_binding')
@@ -543,8 +619,10 @@ class MQTTThread(weewx.restx.RESTThread):
                  client_id='', topic='', unit_system=None, skip_upload=False,
                  augment_record=True, retain=False, aggregation='individual',
                  inputs={}, obs_to_upload='all', append_units_label=True,
-                 manager_dict=None, tls=None, qos=0,
+                 manager_dict=None, tls=None, qos=1,
                  ha_discovery=None,
+                 keepalive=60, connect_timeout=10, publish_timeout=10,
+                 reconnect_min_delay=1, reconnect_max_delay=120,
                  post_interval=None, stale=None,
                  log_success=True, log_failure=True,
                  timeout=60, max_tries=3, retry_wait=5,
@@ -591,8 +669,25 @@ class MQTTThread(weewx.restx.RESTThread):
         self.aggregation = aggregation
         self.templates = dict()
         self.skip_upload = skip_upload
+        self.keepalive = to_int(keepalive)
+        self.connect_timeout = to_float(connect_timeout)
+        self.publish_timeout = to_float(publish_timeout)
+        self.reconnect_min_delay = to_float(reconnect_min_delay)
+        self.reconnect_max_delay = to_float(reconnect_max_delay)
         self.mc = None
-        self.mc_try_time = 0
+        # Set by on_connect once the broker has acknowledged the connection,
+        # cleared by on_disconnect.  This is what lets us wait for a CONNACK
+        # instead of assuming a socket that has been opened is usable.
+        self._connected = threading.Event()
+        # Set when the broker answers at all, accepting or refusing.  A refusal
+        # is final, so waiting on this rather than on _connected lets a bad
+        # password fail immediately instead of sitting out connect_timeout while
+        # the client retries in the background.
+        self._connack = threading.Event()
+        # The reason code from the most recent CONNACK, so a refused connection
+        # can be reported as itself (e.g. "not authorised") rather than as a
+        # mystery publish failure later on.
+        self._connect_rc = None
         # Home Assistant discovery: config dict (or empty) and a one-time guard.
         self.ha = ha_discovery or {}
         device = self.ha.get('device')
@@ -618,34 +713,194 @@ class MQTTThread(weewx.restx.RESTThread):
         # once, not on every record.
         self._warned_no_usunits = False
 
-    def get_mqtt_client(self):
-        if self.mc:
+    def _on_connect(self, rc):
+        """Called from the client's network thread when a CONNACK arrives."""
+        self._connect_rc = rc
+        self._connack.set()
+        # rc is 0 / Success on acceptance.  Anything else is a refusal (bad
+        # credentials, not authorised, server unavailable, ...) and the client
+        # is not usable.
+        if rc == 0:
+            self._connected.set()
+            loginf('connected to %s' %
+                   _obfuscate_password(self.server_url))
+            # The broker may have been restarted without its retained message
+            # store, which would leave Home Assistant with no discovery
+            # configs.  Re-announcing on every connect is cheap and idempotent
+            # (the messages are retained), so let the next record redo it.
+            self._discovery_sent = False
+        else:
+            self._connected.clear()
+            logerr('connection to %s refused: %s' %
+                   (_obfuscate_password(self.server_url),
+                    mqtt.connack_string(rc)))
+
+    def _on_disconnect(self, rc):
+        """Called from the client's network thread when the connection drops."""
+        self._connected.clear()
+        # Log an unexpected disconnect loudly.  Without this the first sign of
+        # trouble is a failed publish, which for an archive binding may not
+        # happen until the next archive interval.
+        if rc == 0:
+            loginf('disconnected from %s' %
+                   _obfuscate_password(self.server_url))
+        else:
+            logerr('unexpectedly disconnected from %s: %s' %
+                   (_obfuscate_password(self.server_url), _rc_string(rc)))
+
+    def _new_paho_client(self, client_id):
+        """Create a paho client, using whichever callback API is available."""
+        if PAHO2:
+            mc = mqtt.Client(CallbackAPIVersion.VERSION2, client_id=client_id)
+            # paho 2.x: on_connect(client, userdata, flags, reason_code,
+            # properties), on_disconnect(client, userdata, flags, reason_code,
+            # properties).
+            mc.on_connect = \
+                lambda c, u, flags, rc, props=None: self._on_connect(rc)
+            mc.on_disconnect = \
+                lambda c, u, flags, rc, props=None: self._on_disconnect(rc)
+        else:
+            mc = mqtt.Client(client_id=client_id)
+            # paho 1.x: on_connect(client, userdata, flags, rc),
+            # on_disconnect(client, userdata, rc).
+            mc.on_connect = lambda c, u, flags, rc: self._on_connect(rc)
+            mc.on_disconnect = lambda c, u, rc: self._on_disconnect(rc)
+        return mc
+
+    def _teardown_client(self):
+        """Discard the current client.  Safe to call in any state."""
+        mc, self.mc = self.mc, None
+        self._connected.clear()
+        if mc is None:
             return
-        if time.time() - self.mc_try_time < self.retry_wait:
-            return
+        # Both calls can raise if the socket is already gone; that is exactly
+        # the situation we are cleaning up after, so it is not worth reporting.
+        try:
+            mc.disconnect()
+        except Exception as e:
+            logdbg('error while disconnecting client: %s' % e)
+        try:
+            mc.loop_stop()
+        except Exception as e:
+            logdbg('error while stopping client loop: %s' % e)
+
+    def _new_client(self):
+        """Connect a new client and wait for the broker to accept it.
+
+        Raises FailedPost if a usable connection cannot be established.
+        """
         client_id = self.client_id
         if not client_id:
             pad = "%032x" % random.getrandbits(128)
             client_id = 'weewx_%s' % pad[:8]
-        mc = mqtt.Client(client_id=client_id)
+        mc = self._new_paho_client(client_id)
+        mc.reconnect_delay_set(min_delay=self.reconnect_min_delay,
+                               max_delay=self.reconnect_max_delay)
         url = urlparse(self.server_url)
         if url.username is not None and url.password is not None:
             mc.username_pw_set(url.username, url.password)
         # if we have TLS opts configure TLS on our broker connection
         if len(self.tls_dict) > 0:
             mc.tls_set(**self.tls_dict)
+        port = url.port or (8883 if self.tls_dict else 1883)
+        self._connected.clear()
+        self._connack.clear()
+        self._connect_rc = None
         try:
-            self.mc_try_time = time.time()
-            mc.connect(url.hostname, url.port)
-        except (socket.error, socket.timeout, socket.herror) as e:
-            logerr('Failed to connect to MQTT server (%s): %s' %
-                    (_obfuscate_password(self.server_url), str(e)))
-            self.mc = None
-            return
+            mc.connect(url.hostname, port, keepalive=self.keepalive)
+        except (socket.error, socket.timeout, socket.herror, OSError,
+                ValueError) as e:
+            # ValueError covers a malformed server_url (no host, bad port).
+            # Reporting it per record is better than letting it propagate and
+            # terminate the posting thread.
+            raise weewx.restx.FailedPost(
+                'cannot connect to MQTT server (%s): %s' %
+                (_obfuscate_password(self.server_url), e))
         mc.loop_start()
-        loginf('client established for %s' %
-               _obfuscate_password(self.server_url))
         self.mc = mc
+        # connect() only opens the socket and sends the CONNECT packet; the
+        # broker's CONNACK is handled by the network thread started above.
+        # Wait for it, so we never hand back a client that the broker has not
+        # accepted -- otherwise a refused connection only shows up as a failed
+        # publish much later.
+        self._connack.wait(self.connect_timeout)
+        if not self._connected.is_set():
+            rc = self._connect_rc
+            self._teardown_client()
+            if rc is None:
+                raise weewx.restx.FailedPost(
+                    'timed out after %s seconds waiting for MQTT server (%s) '
+                    'to acknowledge the connection' %
+                    (self.connect_timeout,
+                     _obfuscate_password(self.server_url)))
+            raise weewx.restx.FailedPost(
+                'MQTT server (%s) refused the connection: %s' %
+                (_obfuscate_password(self.server_url),
+                 mqtt.connack_string(rc)))
+        logdbg('client established for %s' %
+               _obfuscate_password(self.server_url))
+        return mc
+
+    def _ensure_client(self):
+        """Return a connected client, rebuilding it if the connection is gone.
+
+        Raises FailedPost if no connection can be established.
+        """
+        if self.mc is not None and self.mc.is_connected():
+            return self.mc
+        if self.mc is not None:
+            # The client exists but is not connected.  It may be part way
+            # through its own reconnect, so give that a moment to land before
+            # throwing the client away -- but only a moment, because the client
+            # may equally be permanently dead (paho stops its network thread
+            # for good on some disconnect paths), and a dead client can never
+            # publish again.
+            if self._connected.wait(RECONNECT_GRACE) and self.mc.is_connected():
+                return self.mc
+            loginf('MQTT client is not connected; rebuilding it')
+            self._teardown_client()
+        return self._new_client()
+
+    def _publish(self, messages, retain=None):
+        """Publish a list of (topic, payload) and confirm delivery.
+
+        Raises FailedPost if any message could not be handed to the broker.
+        """
+        if retain is None:
+            retain = self.retain
+        # Publish everything first and collect the message handles, then wait.
+        # Waiting on each message before publishing the next would serialize a
+        # broker round trip per observation; this way the acknowledgements come
+        # back in parallel.
+        pending = []
+        for topic, payload in messages:
+            info = self.mc.publish(topic, payload,
+                                   retain=retain, qos=self.qos)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise weewx.restx.FailedPost(
+                    'publish failed for %s: %s' %
+                    (topic, _rc_string(info.rc)))
+            pending.append((topic, info))
+
+        if not self.qos or not self.publish_timeout:
+            return
+        # At qos 0 publish() is fire and forget, so there is nothing to confirm.
+        # At qos 1 or 2 the broker acknowledges each message, which is the only
+        # real evidence the data arrived.
+        deadline = time.time() + self.publish_timeout
+        for topic, info in pending:
+            try:
+                info.wait_for_publish(max(0.0, deadline - time.time()))
+                published = info.is_published()
+            except (RuntimeError, ValueError) as e:
+                # Raised when the message can no longer be delivered, e.g. the
+                # connection dropped between publishing and waiting.
+                raise weewx.restx.FailedPost(
+                    'publish failed for %s: %s' % (topic, e))
+            if not published:
+                raise weewx.restx.FailedPost(
+                    'timed out after %s seconds waiting for the MQTT server to '
+                    'confirm %s' % (self.publish_timeout, topic))
 
     def filter_data(self, record):
         # if uploading everything, we must check the upload variables list
@@ -821,15 +1076,12 @@ class MQTTThread(weewx.restx.RESTThread):
             logdbg("Home Assistant discovery: record has no describable "
                    "observations; will retry on a later record.")
             return
-        self.get_mqtt_client()
-        if not self.mc:
-            raise weewx.restx.FailedPost('MQTT client not available')
-        for topic, payload in configs:
-            (res, mid) = self.mc.publish(topic, json.dumps(payload),
-                                         retain=True, qos=self.qos)
-            if res != mqtt.MQTT_ERR_SUCCESS:
-                logerr("HA discovery publish failed for %s: %s" %
-                       (topic, mqtt.error_string(res)))
+        self._ensure_client()
+        # Discovery messages are retained so Home Assistant sees them whenever it
+        # (re)starts. A failure here propagates so the caller can retry, rather
+        # than leaving HA with a half-announced device.
+        self._publish([(topic, json.dumps(payload))
+                       for topic, payload in configs], retain=True)
         loginf("published Home Assistant discovery for %d sensors" % len(configs))
         # Only now do we consider discovery done, so a first record that could not
         # be described does not permanently suppress it.
@@ -859,24 +1111,37 @@ class MQTTThread(weewx.restx.RESTThread):
         if self.skip_upload:
             loginf("skipping upload")
             return
-        self.get_mqtt_client()
-        if not self.mc:
-            raise weewx.restx.FailedPost('MQTT client not available')
-        # Publish Home Assistant discovery once, before the first data packet.
-        if self.ha.get('enable') and not self._discovery_sent:
-            self.publish_ha_discovery(record)
+        messages = []
         if self.aggregation.find('aggregate') >= 0:
-            tpc = self.topic + '/loop'
-            (res, mid) = self.mc.publish(tpc, json.dumps(data),
-                                         retain=self.retain, qos=self.qos)
-            if res != mqtt.MQTT_ERR_SUCCESS:
-                logerr("publish failed for %s: %s" %
-                       (tpc, mqtt.error_string(res)))
+            messages.append((self.topic + '/loop', json.dumps(data)))
         if self.aggregation.find('individual') >= 0:
             for key in data:
-                tpc = self.topic + '/' + key
-                (res, mid) = self.mc.publish(tpc, data[key],
-                                             retain=self.retain)
-                if res != mqtt.MQTT_ERR_SUCCESS:
-                    logerr("publish failed for %s: %s" %
-                           (tpc, mqtt.error_string(res)))
+                messages.append((self.topic + '/' + key, data[key]))
+
+        # Try the whole record, connection included, up to max_tries times.
+        # weewx does not retry for us: RESTThread.run_loop only retries posts
+        # made through post_with_retries(), which this thread does not use, so
+        # a FailedPost that escapes here is the end of the road for the record.
+        for attempt in range(self.max_tries):
+            try:
+                self._ensure_client()
+                # Publish Home Assistant discovery before the first data packet,
+                # and again after a reconnect (see _on_connect).
+                if self.ha.get('enable') and not self._discovery_sent:
+                    self.publish_ha_discovery(record)
+                self._publish(messages)
+                return
+            except weewx.restx.FailedPost as e:
+                # A failed publish almost always means the connection has gone,
+                # so discard the client and let the next attempt build a fresh
+                # one.  This is also what keeps the retry exactly-once: at qos 1
+                # or 2 the client holds a message published while disconnected
+                # and would redeliver it on reconnect, so republishing on a
+                # reused client would send every observation twice.
+                self._teardown_client()
+                if attempt + 1 >= self.max_tries:
+                    raise weewx.restx.FailedPost(
+                        'failed after %d attempts: %s' % (self.max_tries, e))
+                loginf('attempt %d of %d failed (%s); retrying in %s seconds' %
+                       (attempt + 1, self.max_tries, e, self.retry_wait))
+                time.sleep(self.retry_wait)

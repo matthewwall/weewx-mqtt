@@ -21,8 +21,10 @@ except ImportError:
     import Queue
 
 # Make 'import mqtt' work whether or not the extension is installed as user.mqtt.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import mqtt  # noqa: E402
+from fakes import FakeClient  # noqa: E402
 
 import weewx  # noqa: E402
 
@@ -62,16 +64,6 @@ def make_thread(ha=None, **kwargs):
                 ha_discovery=copy.deepcopy(HA_DISCOVERY if ha is None else ha))
     opts.update(kwargs)
     return mqtt.MQTTThread(Queue.Queue(), **opts)
-
-
-class FakeClient:
-    """Minimal stand-in for a paho client that records what was published."""
-    def __init__(self):
-        self.published = []
-
-    def publish(self, topic, payload=None, retain=False, qos=0):
-        self.published.append((topic, payload, retain))
-        return (mqtt.mqtt.MQTT_ERR_SUCCESS, 1)
 
 
 class DiscoveryUnitsTest(unittest.TestCase):
@@ -248,7 +240,6 @@ class UnitSystemConversionTest(unittest.TestCase):
     def _run(self, unit_system):
         t = make_thread(unit_system=unit_system)
         t.mc = FakeClient()
-        t.get_mqtt_client = lambda: None
         t.process_record(dict(US_RECORD), None)
         published = dict((tp[0], tp[1]) for tp in t.mc.published)
         return t, published
@@ -282,7 +273,6 @@ class MissingUsUnitsTest(unittest.TestCase):
     def test_publish_skips_and_does_not_latch(self):
         t = make_thread()
         t.mc = FakeClient()
-        t.get_mqtt_client = lambda: None
         t.publish_ha_discovery(self.NO_UNITS)
         self.assertEqual(t.mc.published, [], "nothing should be published")
         self.assertFalse(t._discovery_sent,
@@ -291,7 +281,6 @@ class MissingUsUnitsTest(unittest.TestCase):
     def test_retries_on_later_valid_record(self):
         t = make_thread()
         t.mc = FakeClient()
-        t.get_mqtt_client = lambda: None
         # First attempt: no usUnits -> skipped, not latched.
         t.publish_ha_discovery(self.NO_UNITS)
         self.assertFalse(t._discovery_sent)
@@ -306,7 +295,6 @@ class MissingUsUnitsTest(unittest.TestCase):
         # without it must be skipped, not raise (which would kill the thread).
         t = make_thread()
         t.mc = FakeClient()
-        t.get_mqtt_client = lambda: None
         t.process_record(dict(self.NO_UNITS), None)  # must not raise
         self.assertEqual(t.mc.published, [])
         self.assertFalse(t._discovery_sent)
@@ -321,7 +309,6 @@ class TriggerTest(unittest.TestCase):
     def test_discovery_published_once_before_data(self):
         t = make_thread()
         t.mc = FakeClient()
-        t.get_mqtt_client = lambda: None  # don't touch the network
         t.process_record(dict(US_RECORD), None)
 
         disc = [tp for tp in t.mc.published if tp[0].startswith('homeassistant/')]
@@ -340,7 +327,6 @@ class TriggerTest(unittest.TestCase):
     def test_disabled_discovery_publishes_no_configs(self):
         t = make_thread(ha={'enable': False})
         t.mc = FakeClient()
-        t.get_mqtt_client = lambda: None
         t.process_record(dict(US_RECORD), None)
         disc = [tp for tp in t.mc.published if tp[0].startswith('homeassistant/')]
         self.assertEqual(disc, [])

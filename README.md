@@ -75,7 +75,35 @@ _aggregation_ - How the observations should be grouped.  Options are `individual
 
 _retain_ - When set to `True`, the MQTT `retain` property is set for each message.  Default is `False`.
 
-_client_id_ - Use this mqtt client ID (optional)
+_qos_ - The MQTT quality of service for each message: `0` (at most once), `1` (at least once), or `2` (exactly once).  Default is `1`.  At qos `0` the client silently discards anything published while the connection to the broker is down, so a momentary outage loses the record; at qos `1` or above the message is queued and delivered once the connection is back, and the broker acknowledges it.
+
+_client_id_ - Use this mqtt client ID (optional).  An MQTT broker permits only one connection per client identifier and disconnects the older connection when a second one presents the same id.  If you set this, running `weectl rest run MQTT` by hand will therefore kick the running weewx daemon off the broker.  Leaving it unset (the default) gives each connection a random id and avoids this.
+
+### Connection robustness
+
+The connection to the broker is verified before every post and rebuilt if it has been lost, and a post that fails is retried on a fresh connection.  A record that still cannot be delivered is reported to weewx as a failed post rather than silently dropped.
+
+The defaults suit an archive binding.  If you use `binding = loop`, lower the timeouts so that a broker outage cannot stall the posting thread between packets, and set `max_backlog` to bound the queue of pending packets.
+
+_keepalive_ - The MQTT keepalive interval, in seconds.  The broker declares the client dead if it hears nothing for 1.5x this.  Default is `60`.
+
+_connect_timeout_ - How long to wait for the broker to acknowledge a connection, in seconds.  Default is `10`.
+
+_publish_timeout_ - How long to wait for the broker to confirm delivery of a message, in seconds.  Only meaningful when `qos` is `1` or `2`; set to `0` to publish without waiting for confirmation.  Default is `10`.
+
+_reconnect_min_delay_, _reconnect_max_delay_ - Bounds on the delay between the client's own reconnection attempts, in seconds.  The delay doubles from min to max.  Defaults are `1` and `120`.
+
+_max_tries_ - How many times to try posting a record before giving up.  Default is `3`.
+
+_retry_wait_ - How long to wait between attempts, in seconds.  Default is `5`.
+
+Worst case, a record occupies the posting thread for `max_tries x (connect_timeout + publish_timeout + retry_wait)` seconds before it is abandoned.
+
+With verification, data sending errors, such as:
+```text
+ERROR user.mqtt: publish failed for weather/weewx/loop: The client is not currently connected.
+```
+Should be absent.
 
 ### Topic names
 
