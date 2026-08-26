@@ -75,7 +75,35 @@ _aggregation_ - How the observations should be grouped.  Options are `individual
 
 _retain_ - When set to `True`, the MQTT `retain` property is set for each message.  Default is `False`.
 
-_client_id_ - Use this mqtt client ID (optional)
+_qos_ - The MQTT quality of service for each message: `0` (at most once), `1` (at least once), or `2` (exactly once).  Default is `1`.  At qos `0` the client silently discards anything published while the connection to the broker is down, so a momentary outage loses the record; at qos `1` or above the message is queued and delivered once the connection is back, and the broker acknowledges it.
+
+_client_id_ - Use this mqtt client ID (optional).  An MQTT broker permits only one connection per client identifier and disconnects the older connection when a second one presents the same id.  If you set this, running `weectl rest run MQTT` by hand will therefore kick the running weewx daemon off the broker.  Leaving it unset (the default) gives each connection a random id and avoids this.
+
+### Connection robustness
+
+The connection to the broker is verified before every post and rebuilt if it has been lost, and a post that fails is retried on a fresh connection.  A record that still cannot be delivered is reported to weewx as a failed post rather than silently dropped.
+
+The defaults suit an archive binding.  If you use `binding = loop`, lower the timeouts so that a broker outage cannot stall the posting thread between packets, and set `max_backlog` to bound the queue of pending packets.
+
+_keepalive_ - The MQTT keepalive interval, in seconds.  The broker declares the client dead if it hears nothing for 1.5x this.  Default is `60`.
+
+_connect_timeout_ - How long to wait for the broker to acknowledge a connection, in seconds.  Default is `10`.
+
+_publish_timeout_ - How long to wait for the broker to confirm delivery of a message, in seconds.  Only meaningful when `qos` is `1` or `2`; set to `0` to publish without waiting for confirmation.  Default is `10`.
+
+_reconnect_min_delay_, _reconnect_max_delay_ - Bounds on the delay between the client's own reconnection attempts, in seconds.  The delay doubles from min to max.  Defaults are `1` and `120`.
+
+_max_tries_ - How many times to try posting a record before giving up.  Default is `3`.
+
+_retry_wait_ - How long to wait between attempts, in seconds.  Default is `5`.
+
+Worst case, a record occupies the posting thread for `max_tries x (connect_timeout + publish_timeout + retry_wait)` seconds before it is abandoned.
+
+With verification, data sending errors, such as:
+```text
+ERROR user.mqtt: publish failed for weather/weewx/loop: The client is not currently connected.
+```
+Should be absent.
 
 ### Topic names
 
@@ -84,6 +112,75 @@ This extension allows renaming (see examples), but the default is to use individ
 For publishing aggregate data, the topic is TOPIC/loop, and the content is a json dictionary where the keys are what would be used for individual topics.  The dictionary will appear to be in an arbitrary order, but this is ok as dictionaries are not ordered.
 
 Note that the choice of topic names (including unit suffixes) and units used in the contents forms a protocol and the configuration of this extension and of other programs that consume this data must match.
+
+
+### Home Assistant discovery
+
+This extension can announce its observations to [Home Assistant](https://www.home-assistant.io/)
+using [MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery),
+so the sensors appear automatically without any manual entity configuration.
+
+```
+[StdRESTful]
+    [[MQTT]]
+        ...
+        # To send metric/SI units to Home Assistant, convert the published data
+        # with the standard unit_system option (US, METRIC, or METRICWX). If this
+        # is not set, the station's native units are published and announced.
+        unit_system = METRICWX
+        [[[ha_discovery]]]
+            # Turn on Home Assistant discovery
+            enable = true
+            # Topic prefix Home Assistant listens on (default: homeassistant)
+            discovery_prefix = homeassistant
+            # Identifier for this station's node/device (default: weewx)
+            node_id = weewx
+            # Prefix for the entities' unique ids (default: weewx)
+            unique_id_prefix = weewx
+            # Observations to leave OUT of Home Assistant discovery, comma-
+            # separated. NOTE: this only suppresses the discovery message for
+            # these fields -- they are STILL published as normal MQTT data. It
+            # does not stop them from being sent. (usUnits and interval never get
+            # a discovery message.)
+            skip_fields = inTemp, inHumidity
+            [[[[device]]]]
+                # All values optional; sensible defaults are taken from [Station].
+                name = My Weather Station
+                manufacturer = WeeWX
+                model = Vantage Pro2
+                identifiers = weewx
+```
+
+Notes:
+
+* Discovery describes the data **exactly as it is published**, including its
+  units. Whether values are converted is entirely up to you, via the existing
+  `unit_system` option: leave it unset to publish (and announce) the station's
+  native units (e.g. `°F`, `inHg`), or set `unit_system = METRICWX` to publish
+  and announce metric/SI units (`°C`, `hPa`, `mm`, `m/s`). This works for any
+  station regardless of the units it natively reports.
+* **`skip_fields` does not stop a field from being published over MQTT.** It only
+  suppresses the Home Assistant *discovery* message for that field, so no HA
+  entity is auto-created for it. The field's data is still sent on its normal
+  topic / in the aggregate packet exactly as before; you can still subscribe to
+  it or add it to Home Assistant manually. `usUnits` and `interval` never get a
+  discovery message.
+* `dateTime` (the time of the observation) is published as a Home Assistant
+  `timestamp` entity named **Observation Time** (`weewx_observation_time`). Its
+  Unix-epoch value is converted to a datetime in the discovery `value_template`.
+* Discovery messages are published **once**, **retained**, just before the first
+  data packet is sent. Because they are retained, Home Assistant will pick them
+  up even if it (re)starts later, and re-sending them on each weewx restart is
+  harmless.
+* You can also (re)publish discovery on demand, without waiting for weewx to send
+  a packet, using the `weectl rest` command:
+
+  ```
+  weectl rest run MQTT --discovery
+  ```
+
+  This publishes the discovery messages (using the most recent archive record to
+  determine the available observations) and then exits.
 
 
 ### TLS Options
