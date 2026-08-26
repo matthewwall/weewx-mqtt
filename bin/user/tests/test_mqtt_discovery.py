@@ -126,8 +126,9 @@ class DiscoveryUnitsTest(unittest.TestCase):
 
 
 class DeviceClassUnitValidationTest(unittest.TestCase):
-    """HA rejects an entity whose unit is invalid for its device_class. We keep
-    the (correct) unit and drop the device_class instead."""
+    """HA rejects an entity whose unit is invalid for its device_class. Where
+    HA_UNIT_FIXUPS has a conversion, we scale the value and report the converted
+    unit; otherwise we keep the (correct) unit and drop the device_class."""
 
     def test_us_rainrate_keeps_device_class(self):
         c = dict(make_thread()._discovery_configs(US_RECORD))
@@ -135,19 +136,36 @@ class DeviceClassUnitValidationTest(unittest.TestCase):
         self.assertEqual(p['unit_of_measurement'], 'in/h')
         self.assertEqual(p['device_class'], 'precipitation_intensity')
 
-    def test_metric_rainrate_drops_invalid_device_class(self):
+    def test_metric_rainrate_converted_to_keep_device_class(self):
         # weewx METRIC reports rainRate in cm/h, which HA does NOT accept for
-        # precipitation_intensity.
+        # precipitation_intensity; a fixup scales it to mm/h instead of dropping
+        # the device_class.
         rec = {'dateTime': 1781339400, 'usUnits': weewx.METRIC, 'interval': 5,
                'rainRate': 0.5, 'rain': 0.1}
         c = dict(make_thread()._discovery_configs(rec))
         p = c['homeassistant/sensor/weewx/rainRate/config']
-        self.assertEqual(p['unit_of_measurement'], 'cm/h')   # unit kept (the truth)
-        self.assertNotIn('device_class', p)                  # invalid pairing dropped
-        self.assertEqual(p['state_class'], 'measurement')    # still a measurement
-        # rain (cm) is valid for the 'precipitation' device_class, so it stays.
-        self.assertEqual(c['homeassistant/sensor/weewx/rain/config']['device_class'],
-                         'precipitation')
+        self.assertEqual(p['unit_of_measurement'], 'mm/h')
+        self.assertEqual(p['device_class'], 'precipitation_intensity')
+        self.assertEqual(p['state_class'], 'measurement')
+        self.assertEqual(p['value_template'],
+                          '{{ ((value_json.rainRate_cm_per_hour | float) * 10.0) '
+                          '| round(2) }}')
+        # rain (cm) is valid for the 'precipitation' device_class as-is, so it
+        # stays unconverted (its value_template just pulls the field out of the
+        # JSON, same as any other aggregate-mode sensor).
+        rain = c['homeassistant/sensor/weewx/rain/config']
+        self.assertEqual(rain['device_class'], 'precipitation')
+        self.assertEqual(rain['value_template'], '{{ value_json.rain_cm }}')
+
+    def test_metric_rainrate_individual_mode_scales_raw_payload(self):
+        rec = {'dateTime': 1781339400, 'usUnits': weewx.METRIC, 'interval': 5,
+               'rainRate': 0.5, 'rain': 0.1}
+        c = dict(make_thread(aggregation='individual')._discovery_configs(rec))
+        p = c['homeassistant/sensor/weewx/rainRate/config']
+        self.assertEqual(p['unit_of_measurement'], 'mm/h')
+        self.assertEqual(p['device_class'], 'precipitation_intensity')
+        self.assertEqual(p['value_template'],
+                          '{{ ((value | float) * 10.0) | round(2) }}')
 
 
 class NoUnitsLabelTest(unittest.TestCase):

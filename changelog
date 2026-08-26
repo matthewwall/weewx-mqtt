@@ -1,3 +1,9 @@
+0.27 18aug2026
+* fixed: under unit_system=METRIC, rainRate (cm/h) was published to Home
+  Assistant without a device_class, because HA's 'precipitation_intensity'
+  device_class does not accept cm/h. The value is now scaled to mm/h for
+  discovery so the device_class is kept, instead of being dropped.
+
 0.26 16aug2026
 * fixed: once the connection to the broker was lost, the client was never
   checked or rebuilt, so every subsequent post failed with "The client is not

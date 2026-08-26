@@ -173,7 +173,7 @@ import weewx.restx
 import weewx.units
 from weeutil.weeutil import to_int, to_float, to_bool, accumulateLeaves
 
-VERSION = "0.26"
+VERSION = "0.27"
 
 # How long to let the client finish a reconnect of its own before giving up on
 # it and building a new one.  Short on purpose: a client that is genuinely
@@ -337,7 +337,8 @@ UNIT_TO_HA_UOM = {
 # rejects the whole discovery message if the unit_of_measurement is not one of
 # them (e.g. 'cm/h' is not valid for 'precipitation_intensity'). For each
 # device_class we use, this lists the units HA accepts. If our published unit is
-# not in the set, we drop the device_class rather than the (correct) unit.
+# not in the set and HA_UNIT_FIXUPS (below) has no conversion for it, we drop the
+# device_class rather than the (correct) unit.
 # Device classes without a unit constraint (e.g. 'timestamp') are not listed.
 DEVICE_CLASS_UNITS = {
     'temperature':             {'°C', '°F', 'K'},
@@ -355,6 +356,19 @@ DEVICE_CLASS_UNITS = {
     'energy':                  {'J', 'kJ', 'MJ', 'GJ', 'mWh', 'Wh', 'kWh',
                                 'MWh', 'GWh', 'TWh', 'cal', 'kcal', 'Mcal',
                                 'Gcal'},
+}
+
+# Known (device_class, weewx unit) pairs that DEVICE_CLASS_UNITS rejects, for
+# which a straightforward linear conversion to an HA-accepted unit exists. Where
+# a fixup is listed, discovery reports the target unit and scales the value in
+# the value_template rather than dropping the device_class. Maps
+# (device_class, weewx unit) -> (target HA unit_of_measurement, scale factor).
+#
+# weewx METRIC reports rain rate in cm/h; HA's 'precipitation_intensity' only
+# accepts in/d, in/h, mm/d, mm/h (not cm/h). US (in/h) and METRICWX (mm/h) need
+# no fixup.
+HA_UNIT_FIXUPS = {
+    ('precipitation_intensity', 'cm_per_hour'): ('mm/h', 10.0),
 }
 
 # Observations in group_percent that really represent relative humidity. These
@@ -1006,17 +1020,24 @@ class MQTTThread(weewx.restx.RESTThread):
                 device_class = 'humidity'
             name, unit = self._published_name_and_unit(obs, usUnits)
             uom = UNIT_TO_HA_UOM.get(unit)
+            value_factor = None
             # HA validates the unit against the device_class and rejects the whole
             # entity on a mismatch (e.g. 'cm/h' is not valid for
-            # 'precipitation_intensity' when unit_system=METRIC). The unit is the
-            # truth, so keep it and drop the device_class instead -- the sensor is
-            # then a plain measurement with the correct unit.
+            # 'precipitation_intensity' when unit_system=METRIC). Where
+            # HA_UNIT_FIXUPS has a conversion for it, report the converted unit and
+            # scale the value instead; otherwise the unit is the truth, so keep it
+            # and drop the device_class -- the sensor is then a plain measurement
+            # with the correct unit.
             if (device_class in DEVICE_CLASS_UNITS
                     and uom not in DEVICE_CLASS_UNITS[device_class]):
-                logdbg("HA discovery: unit %r not valid for device_class %r on "
-                       "%s; publishing without a device_class"
-                       % (uom, device_class, obs))
-                device_class = None
+                fixup = HA_UNIT_FIXUPS.get((device_class, unit))
+                if fixup is not None:
+                    uom, value_factor = fixup
+                else:
+                    logdbg("HA discovery: unit %r not valid for device_class %r on "
+                           "%s; publishing without a device_class"
+                           % (uom, device_class, obs))
+                    device_class = None
             obs_id = OBS_ID_OVERRIDES.get(obs, obs)
             is_timestamp = device_class == 'timestamp'
             payload = {
@@ -1041,11 +1062,16 @@ class MQTTThread(weewx.restx.RESTThread):
                 payload['state_topic'] = self.topic + '/' + name
                 src = "value"
             # A timestamp is published as a Unix epoch, but HA's timestamp
-            # device_class needs a datetime, so convert it. Other fields need a
-            # template only in aggregate mode (to pull the value out of the JSON);
-            # in individual mode the raw payload already is the value.
+            # device_class needs a datetime, so convert it. A HA_UNIT_FIXUPS
+            # conversion needs a template to scale the value (even in individual
+            # mode, where otherwise the raw payload already is the value). Other
+            # fields need a template only in aggregate mode, to pull the value out
+            # of the JSON.
             if is_timestamp:
                 payload['value_template'] = "{{ as_datetime(%s | float) }}" % src
+            elif value_factor is not None:
+                payload['value_template'] = (
+                    "{{ ((%s | float) * %s) | round(2) }}" % (src, value_factor))
             elif aggregate:
                 payload['value_template'] = "{{ %s }}" % src
             topic = "%s/sensor/%s/%s/config" % (prefix, node, obs)
