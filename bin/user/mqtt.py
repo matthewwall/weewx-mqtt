@@ -1,6 +1,6 @@
 # Copyright 2013-2022 Matthew Wall
 # Distributed under the terms of the GNU Public License (GPLv3)
-"""
+r"""
 Upload data to MQTT server
 
 This service requires the python bindings for mqtt:
